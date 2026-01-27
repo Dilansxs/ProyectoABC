@@ -1,0 +1,34 @@
+# Dependencias del Sistema de Reidentificación de Personas
+
+# Procesamiento de imágenes y video
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+
+# Machine Learning y clasificación
+scikit-learn>=1.3.0
+scikit-image>=0.21.0
+
+# Deep Learning (para detección y extracción de características)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Utilidades
+scipy>=1.11.0
+matplotlib>=3.7.0
+pandas>=2.0.0
+
+# CLI
+click>=8.1.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code quality
+black>=23.0.0
+pylint>=2.17.0
+flake8>=6.0.0
+
+# Documentación
+sphinx>=7.0.0

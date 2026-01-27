@@ -1,0 +1,54 @@
+# Dataset
+dataset/
+datasetPros/
+*.mp4
+*.avi
+*.mov
+*.flv
+*.mkv
+
+# Modelos entrenados
+models/
+*.pkl
+*.pth
+*.h5
+*.joblib
+
+# Archivos temporales
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Entorno virtual
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archivos de salida
+results/
+output/
+*.log
+*.csv
+
+# Cache
+.cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Datos sensibles
+.env
+*.credentials
+*.key
