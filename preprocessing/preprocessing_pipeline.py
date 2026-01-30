@@ -1,267 +1,363 @@
+"""
+Pipeline de preprocesamiento que orquesta la extracción de fotogramas y data augmentation.
+
+Este módulo coordina el flujo completo de preprocesamiento desde videos originales
+hasta un dataset procesado y aumentado.
+"""
+
 import os
 import shutil
+import logging
+from typing import Optional, Dict
+from pathlib import Path
+
 from .frame_extraction import FrameExtraction
 from .data_augmentation import DataAugmentation
 
 
 class PreprocessingPipeline:
     """
-    Pipeline completo: extracción de frames + detección YOLOv8 + augmentation.
+    Clase que coordina el pipeline completo de preprocesamiento.
+    
+    Transforma el dataset original de videos en un dataset procesado
+    con imágenes de rostros y cuerpos detectados y aumentados.
+    
+    Estructura de entrada (dataset_path):
+    dataset/
+    ├── persona1/
+    │   ├── front/
+    │   │   └── video1.mp4
+    │   └── back/
+    │       └── video2.mp4
+    └── ...
+    
+    Estructura de salida (output_path):
+    datasetPros/
+    ├── persona1/
+    │   ├── face/
+    │   │   └── img0001.png
+    │   ├── front/
+    │   │   └── img0001.png
+    │   └── back/
+    │       └── img0001.png
+    └── ...
+    
+    Attributes:
+        frame_extractor (FrameExtraction): Instancia del extractor de fotogramas.
+        data_augmenter (DataAugmentation): Instancia del módulo de data augmentation.
+        dataset_path (str): Ruta del dataset original.
+        output_path (str): Ruta de salida para el dataset procesado.
     """
     
-    def __init__(self, dataset_path, output_path, fps=10, use_yolo=True):
+    def __init__(self, dataset_path: str, output_path: str, fps: int = 10,
+                 face_resolution: tuple = (256, 256),
+                 body_resolution: tuple = (256, 512),
+                 confidence_threshold: float = 0.5):
         """
         Inicializa el pipeline de preprocesamiento.
         
         Args:
-            dataset_path (str): Ruta del dataset original.
-            output_path (str): Ruta del dataset procesado.
+            dataset_path (str): Ruta del dataset original con videos.
+            output_path (str): Ruta del dataset procesado de salida.
             fps (int): Fotogramas por segundo a extraer.
-            use_yolo (bool): Si es True, usa YOLOv8 para detectar cuerpos.
+            face_resolution (tuple): Resolución para rostros (ancho, alto).
+            body_resolution (tuple): Resolución para cuerpos (ancho, alto).
+            confidence_threshold (float): Umbral de confianza para detecciones.
         """
         self.dataset_path = dataset_path
         self.output_path = output_path
         self.fps = fps
-        self.use_yolo = use_yolo
+        self.face_resolution = face_resolution
+        self.body_resolution = body_resolution
+        self.confidence_threshold = confidence_threshold
         
-        os.makedirs(self.output_path, exist_ok=True)
+        # Inicializar extractores y aumentadores
+        self.frame_extractor = FrameExtraction(
+            fps=fps,
+            output_path=output_path,
+            face_resolution=face_resolution,
+            body_resolution=body_resolution,
+            confidence_threshold=confidence_threshold
+        )
         
-        self.temp_frames_path = os.path.join(output_path, '_temp_frames')
-        os.makedirs(self.temp_frames_path, exist_ok=True)
-        
-        self.frame_extractor = FrameExtraction(fps=fps, output_path=self.temp_frames_path)
         self.data_augmenter = DataAugmentation()
         
-        # Inicializar detector de cuerpos si se usa YOLO
-        if self.use_yolo:
-            try:
-                from detection import BodyDetection
-                self.body_detector = BodyDetection(confidence_threshold=0.3)
-                print("[Pipeline] YOLOv8 habilitado para detección de cuerpos")
-            except Exception as e:
-                print(f"[WARN] No se pudo cargar YOLOv8: {e}")
-                print("[INFO] Continuando sin detección automática")
-                self.use_yolo = False
-                self.body_detector = None
-        else:
-            self.body_detector = None
+        # Estado del pipeline
+        self.pipeline_status = {
+            'extraction_completed': False,
+            'augmentation_completed': False,
+            'extraction_stats': None,
+            'augmentation_stats': None
+        }
         
-        self.results = {}
+        # Configurar logging
+        self._setup_logging()
+        
+        # Crear estructura de carpetas de salida
+        self._create_output_structure()
     
-    def run_full_pipeline(self, augmentation_multiplier=3):
+    def _setup_logging(self):
+        """Configura el sistema de logging."""
+        self.logger = logging.getLogger('PreprocessingPipeline')
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '[%(asctime)s] %(levelname)s - %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
+    
+    def _create_output_structure(self):
+        """Crea la estructura de carpetas de salida."""
+        os.makedirs(self.output_path, exist_ok=True)
+        self.logger.info(f"Directorio de salida: {self.output_path}")
+    
+    def run_full_pipeline(self, augmentation_multiplier: int = 3) -> Dict:
         """
         Ejecuta el pipeline completo de preprocesamiento.
+        
+        1. Extrae fotogramas de videos a 10 FPS
+        2. Detecta rostros y cuerpos
+        3. Guarda imágenes redimensionadas
+        4. Aplica data augmentation
+        
+        Args:
+            augmentation_multiplier (int): Número de augmentaciones por imagen.
+        
+        Returns:
+            dict: Estadísticas del procesamiento completo.
         """
-        print("\n" + "="*60)
-        print("   PIPELINE COMPLETO DE PREPROCESAMIENTO")
-        if self.use_yolo:
-            print("   (con detección YOLOv8)")
-        print("="*60)
+        self.logger.info("=" * 60)
+        self.logger.info("INICIANDO PIPELINE COMPLETO DE PREPROCESAMIENTO")
+        self.logger.info("=" * 60)
         
-        # PASO 1: Extracción de fotogramas
-        print("\n[PASO 1/4] Extrayendo fotogramas de videos...")
-        extraction_stats = self.frame_extractor.process_dataset(self.dataset_path)
-        self.results['extraction'] = extraction_stats
+        # Paso 1: Extracción de frames con detección
+        self.logger.info("\n[PASO 1/2] Extracción de frames y detección...")
+        extraction_stats = self.extract_frames_only()
         
-        print(f"\n✓ Extracción completada:")
-        print(f"  - Videos procesados: {extraction_stats['total_videos']}")
-        print(f"  - Frames extraídos: {extraction_stats['total_frames']}")
-        print(f"  - Personas: {extraction_stats['total_persons']}")
-        
-        # PASO 2: Detección de cuerpos con YOLO (opcional)
-        if self.use_yolo and self.body_detector is not None:
-            print("\n[PASO 2/4] Detectando cuerpos con YOLOv8...")
-            detection_stats = self._detect_bodies()
-            self.results['detection'] = detection_stats
-            
-            print(f"\n✓ Detección completada:")
-            print(f"  - Imágenes procesadas: {detection_stats.get('images_processed', 0)}")
-            print(f"  - Cuerpos detectados: {detection_stats.get('bodies_detected', 0)}")
-        else:
-            print("\n[PASO 2/4] Omitiendo detección (YOLOv8 no disponible)")
-            self.results['detection'] = {'skipped': True}
-        
-        # PASO 3: Data augmentation
-        print("\n[PASO 3/4] Aplicando data augmentation...")
-        
-        # Decidir qué carpeta usar como entrada
-        if self.use_yolo and self.results.get('detection', {}).get('bodies_detected', 0) > 0:
-            augmentation_input = self.temp_frames_path + '_detected'
-        else:
-            augmentation_input = self.temp_frames_path
-        
-        augmentation_stats = self.data_augmenter.augment_dataset(
-            augmentation_input,
-            self.output_path,
-            multiplier=augmentation_multiplier
-        )
-        self.results['augmentation'] = augmentation_stats
-        
-        print(f"\n✓ Augmentation completada:")
-        print(f"  - Imágenes originales: {augmentation_stats['original_images']}")
-        print(f"  - Imágenes aumentadas: {augmentation_stats['augmented_images']}")
-        print(f"  - Total final: {augmentation_stats['total_images']}")
-        
-        # PASO 4: Limpieza
-        print("\n[PASO 4/4] Limpiando archivos temporales...")
-        self._cleanup_temp()
-        
-        print("\n" + "="*60)
-        print("   PREPROCESAMIENTO COMPLETADO")
-        print("="*60)
-        print(f"\nDataset procesado guardado en:")
-        print(f"  {self.output_path}")
-        print("\nPróximos pasos:")
-        print("  1. Extraer características (HSV)")
-        print("  2. Entrenar modelo SVM")
-        print("  3. Evaluar desempeño")
-        print("="*60 + "\n")
-        
-        return {
-            'extraction': extraction_stats,
-            'detection': self.results.get('detection', {}),
-            'augmentation': augmentation_stats,
-            'output_path': self.output_path
-        }
-    
-    def _detect_bodies(self):
-        """
-        Detecta cuerpos en los frames extraídos usando YOLOv8.
-        """
-        import cv2
-        
-        stats = {
-            'images_processed': 0,
-            'bodies_detected': 0,
-            'bodies_saved': 0,
-            'persons': {}
-        }
-        
-        # Crear carpeta para frames con cuerpos detectados
-        detected_path = self.temp_frames_path + '_detected'
-        os.makedirs(detected_path, exist_ok=True)
-        
-        # Procesar cada persona
-        for person_name in os.listdir(self.temp_frames_path):
-            person_path = os.path.join(self.temp_frames_path, person_name)
-            
-            if not os.path.isdir(person_path):
-                continue
-            
-            print(f"\n  Procesando: {person_name}")
-            stats['persons'][person_name] = {
-                'images': 0,
-                'bodies': 0
+        if extraction_stats['total_frames_extracted'] == 0:
+            self.logger.warning("No se extrajeron frames. Abortando pipeline.")
+            return {
+                'success': False,
+                'extraction_stats': extraction_stats,
+                'augmentation_stats': None,
+                'message': 'No se detectaron rostros ni cuerpos en los videos.'
             }
-            
-            # Procesar cada vista
-            for view_type in ['front', 'back']:
-                view_path = os.path.join(person_path, view_type)
-                
-                if not os.path.exists(view_path):
-                    continue
-                
-                # Crear carpeta de salida
-                output_view_path = os.path.join(detected_path, person_name, view_type)
-                os.makedirs(output_view_path, exist_ok=True)
-                
-                # Procesar imágenes
-                image_files = [f for f in os.listdir(view_path) 
-                              if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-                
-                for img_file in image_files:
-                    img_path = os.path.join(view_path, img_file)
-                    img = cv2.imread(img_path)
-                    
-                    if img is None:
-                        continue
-                    
-                    stats['images_processed'] += 1
-                    stats['persons'][person_name]['images'] += 1
-                    
-                    # Detectar cuerpos
-                    bodies = self.body_detector.detect_and_crop(img)
-                    
-                    # Guardar cada cuerpo detectado
-                    for i, body in enumerate(bodies):
-                        base_name = os.path.splitext(img_file)[0]
-                        output_file = f"{base_name}_body{i}.jpg"
-                        output_path = os.path.join(output_view_path, output_file)
-                        
-                        cv2.imwrite(output_path, body)
-                        
-                        stats['bodies_detected'] += 1
-                        stats['bodies_saved'] += 1
-                        stats['persons'][person_name]['bodies'] += 1
-                
-                print(f"    {view_type}: {stats['persons'][person_name]['bodies']} cuerpos detectados")
         
-        return stats
-    
-    def _cleanup_temp(self):
-        """
-        Limpia las carpetas temporales.
-        """
-        temp_folders = [
-            self.temp_frames_path,
-            self.temp_frames_path + '_detected'
-        ]
+        # Paso 2: Data augmentation
+        self.logger.info("\n[PASO 2/2] Aplicando data augmentation...")
+        augmentation_stats = self.augment_only(augmentation_multiplier)
         
-        for folder in temp_folders:
-            if os.path.exists(folder):
-                try:
-                    shutil.rmtree(folder)
-                    print(f"  ✓ Eliminada carpeta temporal: {os.path.basename(folder)}")
-                except Exception as e:
-                    print(f"  ⚠ No se pudo eliminar {folder}: {e}")
+        # Compilar resultados finales
+        final_stats = {
+            'success': True,
+            'extraction_stats': extraction_stats,
+            'augmentation_stats': augmentation_stats,
+            'summary': {
+                'videos_processed': extraction_stats['videos_processed'],
+                'total_original_images': extraction_stats['total_frames_extracted'],
+                'total_augmented_images': augmentation_stats['total_augmentations'],
+                'faces_generated': extraction_stats['faces_detected'],
+                'bodies_front_generated': extraction_stats['bodies_front_detected'],
+                'bodies_back_generated': extraction_stats['bodies_back_detected'],
+                'total_errors': len(extraction_stats['errors']) + len(augmentation_stats['errors'])
+            }
+        }
+        
+        self.logger.info("\n" + "=" * 60)
+        self.logger.info("PIPELINE COMPLETADO EXITOSAMENTE")
+        self.logger.info("=" * 60)
+        self.logger.info(f"Videos procesados: {final_stats['summary']['videos_processed']}")
+        self.logger.info(f"Imágenes originales: {final_stats['summary']['total_original_images']}")
+        self.logger.info(f"Imágenes aumentadas: {final_stats['summary']['total_augmented_images']}")
+        self.logger.info(f"Dataset de salida: {self.output_path}")
+        self.logger.info("=" * 60)
+        
+        return final_stats
     
-    def extract_frames_only(self):
+    def extract_frames_only(self) -> Dict:
         """
         Ejecuta solo la etapa de extracción de fotogramas.
+        
+        Extrae frames de videos, detecta rostros y cuerpos,
+        y guarda las imágenes en la estructura de salida.
+        
+        Returns:
+            dict: Estadísticas de extracción.
         """
-        print("\n[EXTRACCIÓN DE FOTOGRAMAS]")
+        self.logger.info("Iniciando extracción de frames...")
+        
+        # Procesar dataset
         stats = self.frame_extractor.process_dataset(self.dataset_path)
-        self.results['extraction'] = stats
+        
+        # Actualizar estado
+        self.pipeline_status['extraction_completed'] = True
+        self.pipeline_status['extraction_stats'] = stats
+        
         return stats
     
-    def get_pipeline_status(self):
+    def augment_only(self, augmentation_multiplier: int = 3) -> Dict:
+        """
+        Ejecuta solo la etapa de data augmentation.
+        
+        Requiere que la extracción haya sido completada primero.
+        
+        Args:
+            augmentation_multiplier (int): Número de augmentaciones por imagen.
+        
+        Returns:
+            dict: Estadísticas de data augmentation.
+        """
+        self.logger.info(f"Iniciando data augmentation (x{augmentation_multiplier})...")
+        
+        # Aplicar augmentation al dataset procesado
+        stats = self.data_augmenter.augment_dataset(
+            dataset_path=self.output_path,
+            output_path=self.output_path,
+            num_augmentations=augmentation_multiplier
+        )
+        
+        # Actualizar estado
+        self.pipeline_status['augmentation_completed'] = True
+        self.pipeline_status['augmentation_stats'] = stats
+        
+        return stats
+    
+    def get_pipeline_status(self) -> Dict:
         """
         Obtiene el estado actual del pipeline.
+        
+        Returns:
+            dict: Información del estado (etapas completadas, progreso, etc.)
         """
-        status = {
-            'dataset_path': self.dataset_path,
-            'output_path': self.output_path,
-            'temp_path': self.temp_frames_path,
-            'fps': self.fps,
-            'use_yolo': self.use_yolo,
-            'results': self.results
+        # Contar archivos en el output
+        file_counts = {
+            'total_images': 0,
+            'faces': 0,
+            'front': 0,
+            'back': 0,
+            'persons': 0
         }
         
         if os.path.exists(self.output_path):
-            total_files = 0
-            for root, dirs, files in os.walk(self.output_path):
-                total_files += len([f for f in files 
-                                   if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
-            status['output_files'] = total_files
+            persons = [d for d in os.listdir(self.output_path) 
+                       if os.path.isdir(os.path.join(self.output_path, d))]
+            file_counts['persons'] = len(persons)
+            
+            for person in persons:
+                person_path = os.path.join(self.output_path, person)
+                
+                for folder in ['face', 'front', 'back']:
+                    folder_path = os.path.join(person_path, folder)
+                    if os.path.exists(folder_path):
+                        count = len([f for f in os.listdir(folder_path) 
+                                     if f.endswith('.png')])
+                        file_counts[folder] += count
+                        file_counts['total_images'] += count
         
-        return status
+        return {
+            'extraction_completed': self.pipeline_status['extraction_completed'],
+            'augmentation_completed': self.pipeline_status['augmentation_completed'],
+            'extraction_stats': self.pipeline_status['extraction_stats'],
+            'augmentation_stats': self.pipeline_status['augmentation_stats'],
+            'output_path': self.output_path,
+            'file_counts': file_counts
+        }
     
-    def clean_output(self, force=False):
+    def clean_output(self, force: bool = False) -> bool:
         """
-        Limpia los archivos de salida.
+        Limpia los archivos de salida (sobrescribir).
+        
+        Args:
+            force (bool): Si es True, elimina sin confirmar.
+        
+        Returns:
+            bool: True si se limpió exitosamente.
         """
-        if not force:
-            confirm = input(f"¿Eliminar todo el contenido de {self.output_path}? (s/n): ")
-            if confirm.lower() != 's':
-                print("Operación cancelada.")
-                return False
+        if not os.path.exists(self.output_path):
+            self.logger.info("Directorio de salida no existe. Nada que limpiar.")
+            return True
         
         try:
-            if os.path.exists(self.output_path):
-                shutil.rmtree(self.output_path)
-                os.makedirs(self.output_path, exist_ok=True)
-                print(f"✓ Directorio limpiado: {self.output_path}")
-                return True
+            # Eliminar contenido del directorio
+            shutil.rmtree(self.output_path)
+            os.makedirs(self.output_path, exist_ok=True)
+            
+            # Reiniciar estado
+            self.pipeline_status = {
+                'extraction_completed': False,
+                'augmentation_completed': False,
+                'extraction_stats': None,
+                'augmentation_stats': None
+            }
+            
+            self.logger.info(f"Directorio de salida limpiado: {self.output_path}")
+            return True
+            
         except Exception as e:
-            print(f"✗ Error al limpiar: {e}")
+            self.logger.error(f"Error limpiando directorio: {str(e)}")
             return False
+    
+    def generate_report(self) -> str:
+        """
+        Genera un reporte en texto del estado del pipeline.
+        
+        Returns:
+            str: Reporte formateado.
+        """
+        status = self.get_pipeline_status()
+        
+        report = []
+        report.append("=" * 60)
+        report.append("REPORTE DEL PIPELINE DE PREPROCESAMIENTO")
+        report.append("=" * 60)
+        report.append("")
+        report.append(f"Dataset origen: {self.dataset_path}")
+        report.append(f"Dataset destino: {self.output_path}")
+        report.append("")
+        report.append("CONFIGURACIÓN:")
+        report.append(f"  - FPS de extracción: {self.fps}")
+        report.append(f"  - Resolución rostros: {self.face_resolution}")
+        report.append(f"  - Resolución cuerpos: {self.body_resolution}")
+        report.append(f"  - Umbral de confianza: {self.confidence_threshold}")
+        report.append("")
+        report.append("ESTADO DEL PIPELINE:")
+        report.append(f"  - Extracción completada: {'Sí' if status['extraction_completed'] else 'No'}")
+        report.append(f"  - Augmentation completada: {'Sí' if status['augmentation_completed'] else 'No'}")
+        report.append("")
+        report.append("CONTEO DE ARCHIVOS:")
+        report.append(f"  - Personas: {status['file_counts']['persons']}")
+        report.append(f"  - Rostros: {status['file_counts']['faces']}")
+        report.append(f"  - Cuerpos frontales: {status['file_counts']['front']}")
+        report.append(f"  - Cuerpos traseros: {status['file_counts']['back']}")
+        report.append(f"  - Total imágenes: {status['file_counts']['total_images']}")
+        report.append("")
+        report.append("=" * 60)
+        
+        return "\n".join(report)
+
+
+def create_pipeline(dataset_path: str = "data/dataset",
+                    output_path: str = "data/datasetPros",
+                    fps: int = 10) -> PreprocessingPipeline:
+    """
+    Función de utilidad para crear un pipeline con configuración predeterminada.
+    
+    Args:
+        dataset_path: Ruta del dataset original.
+        output_path: Ruta de salida.
+        fps: Frames por segundo a extraer.
+    
+    Returns:
+        PreprocessingPipeline configurado.
+    """
+    return PreprocessingPipeline(
+        dataset_path=dataset_path,
+        output_path=output_path,
+        fps=fps,
+        face_resolution=(256, 256),
+        body_resolution=(256, 512),
+        confidence_threshold=0.5
+    )

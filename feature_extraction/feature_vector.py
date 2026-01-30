@@ -152,7 +152,9 @@ class FeatureVector:
         """
         try:
             # Crear directorio si no existe
-            os.makedirs(os.path.dirname(file_path), exist_ok=True) if os.path.dirname(file_path) else None
+            dir_path = os.path.dirname(file_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
             
             data = {
                 'vector': self.vector,
@@ -210,40 +212,40 @@ class FeatureVector:
         return self.vector.copy()
     
     @staticmethod
-    def from_image(image, preprocessor):
+    def from_image(image, extractor):
         """
-        Crea un FeatureVector desde una imagen usando un preprocesador.
+        Crea un FeatureVector desde una imagen usando un extractor.
         
         Args:
             image (numpy.ndarray): Imagen a procesar.
-            preprocessor: Instancia de preprocesador (BLP, HSH o LBP).
+            extractor: Instancia de extractor (HOG, HSV o LBP).
         
         Returns:
             FeatureVector: Vector de características extraído.
         """
-        vector = preprocessor.preprocess(image)
+        vector = extractor.extract(image)
         return FeatureVector(
             vector=vector,
             metadata={
-                'preprocessor': preprocessor.name,
-                'output_dim': preprocessor.output_dim
+                'extractor': extractor.__class__.__name__,
+                'output_dim': extractor.output_dim
             }
         )
     
     @staticmethod
-    def from_images_batch(images, preprocessor, person_ids=None):
+    def from_images_batch(images, extractor, person_ids=None):
         """
         Crea múltiples FeatureVectors desde un lote de imágenes.
         
         Args:
             images (list): Lista de imágenes.
-            preprocessor: Instancia de preprocesador.
+            extractor: Instancia de extractor.
             person_ids (list): Lista de IDs de personas (opcional).
         
         Returns:
             list: Lista de FeatureVector.
         """
-        vectors = preprocessor.preprocess_batch(images)
+        vectors = extractor.extract_batch(images)
         result = []
         
         for i, vec in enumerate(vectors):
@@ -252,7 +254,7 @@ class FeatureVector:
                 vector=vec,
                 person_id=person_id,
                 metadata={
-                    'preprocessor': preprocessor.name,
+                    'extractor': extractor.__class__.__name__,
                     'batch_index': i
                 }
             ))

@@ -20,7 +20,7 @@ class CommandHandler:
         preprocessor: Instancia del preprocesador activo.
     """
     
-    AVAILABLE_PREPROCESSORS = ['HSV']
+    AVAILABLE_PREPROCESSORS = ['BLP', 'HSH', 'LBP']
     
     # ============== RUTAS FIJAS DEL SISTEMA ==============
     # Ruta base del proyecto
@@ -46,7 +46,7 @@ class CommandHandler:
         Inicializa el manejador de comandos.
         """
         self.commands = {}
-        self.preprocessor_type = 'HSV'  # Preprocesador por defecto
+        self.preprocessor_type = 'LBP'  # Preprocesador por defecto
         self.preprocessor = None
         self.last_evaluation = None  # Almacena última evaluación
         self._ensure_directories()
@@ -165,12 +165,23 @@ class CommandHandler:
         }
     
     def _get_preprocessor(self):
+        """
+        Obtiene la instancia del preprocesador configurado.
+        
+        Returns:
+            Instancia del preprocesador.
+        """
         if self.preprocessor is not None:
             return self.preprocessor
         
-        from preprocessing.preprocessors import  HSVPreprocessor
+        from preprocessing.preprocessors import BLPPreprocessor, HSHPreprocessor, LBPPreprocessor
         
-        self.preprocessor = HSVPreprocessor()
+        if self.preprocessor_type == 'BLP':
+            self.preprocessor = BLPPreprocessor()
+        elif self.preprocessor_type == 'HSH':
+            self.preprocessor = HSHPreprocessor()
+        elif self.preprocessor_type == 'LBP':
+            self.preprocessor = LBPPreprocessor()
         
         return self.preprocessor
     

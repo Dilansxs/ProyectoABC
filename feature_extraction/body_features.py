@@ -1,59 +1,89 @@
+"""
+Módulo para la extracción de características corporales.
+
+Extrae vectores numéricos representativos de cuerpos (vista frontal y posterior)
+capturando silueta, proporciones y patrones visuales.
+
+Soporta tres métodos de extracción:
+- 'hog': Histogram of Oriented Gradients (descriptores de forma)
+- 'hsv': Histogramas de color en espacio HSV
+- 'lbp': Local Binary Patterns (descriptores de textura)
+"""
+
 import numpy as np
 import cv2
 import os
+from .hog import HOGExtractor
+from .mfcc import MFCCExtractor
 
 
 class BodyFeatureExtractor:
     """
-    Extractor de características corporales usando HSV.
+    Clase encargada de extraer características discriminativas de cuerpos.
     
-    Este extractor utiliza el preprocesador HSV internamente para
-    extraer características de color de las imágenes corporales.
+    Attributes:
+        method (str): Método de extracción ('hog', 'hsv', 'lbp').
+        extractor: Instancia del extractor específico.
     """
     
-    def __init__(self, model='hsv', embedding_dim=None):
+    AVAILABLE_METHODS = {
+        'hog': HOGExtractor
+    }
+    
+    def __init__(self, method='hog', **kwargs):
         """
         Inicializa el extractor de características corporales.
         
         Args:
-            model (str): Modelo a utilizar ('hsv' por defecto).
-            embedding_dim (int): Dimensionalidad del embedding (calculada por HSV).
+            method (str): Método de extracción ('hog', 'hsv', 'lbp'). Default: 'hog'.
+            **kwargs: Parámetros adicionales para el extractor específico.
+        
+        Raises:
+            ValueError: Si el método no es válido.
         """
-        self.model = model
+        if method not in self.AVAILABLE_METHODS:
+            raise ValueError(
+                f"Método '{method}' no válido. Opciones disponibles: {list(self.AVAILABLE_METHODS.keys())}"
+            )
         
-        # Importar y crear instancia del preprocesador HSV
-        from preprocessing.preprocessors import HSVPreprocessor
-        
-        self.preprocessor = HSVPreprocessor()
-        self.embedding_dim = self.preprocessor.output_dim
-        
-        print(f"[BodyFeatureExtractor] Inicializado con HSV")
-        print(f"  Dimensión de características: {self.embedding_dim}")
+        self.method = method
+        self.extractor = self.AVAILABLE_METHODS[method](**kwargs)
     
     def extract(self, image):
         """
         Extrae características de una imagen corporal.
         
         Args:
-            image (np.ndarray): Imagen del cuerpo en formato numpy array.
+            image (numpy.ndarray): Imagen en formato numpy array (cuerpo).
         
         Returns:
-            numpy.ndarray: Vector de características de dimensión embedding_dim.
+            numpy.ndarray: Vector de características.
         """
-        # Usar el preprocesador HSV para extraer características
-        return self.preprocessor.preprocess(image)
+        if not isinstance(image, np.ndarray):
+            raise TypeError(f"Se espera numpy.ndarray, se recibió {type(image)}")
+        
+        if image.size == 0:
+            raise ValueError("La imagen está vacía")
+        
+        return self.extractor.extract(image)
     
     def extract_batch(self, images):
         """
         Extrae características de un lote de imágenes corporales.
         
         Args:
-            images (list): Lista de imágenes de cuerpos.
+            images (list): Lista de imágenes de cuerpos (numpy arrays).
         
         Returns:
-            numpy.ndarray: Matriz de dimensión (N, embedding_dim).
+            numpy.ndarray: Matriz de características de dimensión (N, feature_dim).
         """
-        return self.preprocessor.preprocess_batch(images)
+        if not isinstance(images, (list, np.ndarray)):
+            raise TypeError(f"Se espera lista o numpy.ndarray, se recibió {type(images)}")
+        
+        if len(images) == 0:
+            raise ValueError("La lista de imágenes está vacía")
+        
+        return self.extractor.extract_batch(images)
     
     def extract_from_directory(self, directory_path):
         """
@@ -63,55 +93,56 @@ class BodyFeatureExtractor:
             directory_path (str): Ruta del directorio con imágenes.
         
         Returns:
-            tuple: (features, file_paths, labels)
+            tuple: (features, file_paths, labels) con matriz, rutas y etiquetas.
         """
         if not os.path.exists(directory_path):
-            raise ValueError(f"Directorio no encontrado: {directory_path}")
+            raise ValueError(f"El directorio no existe: {directory_path}")
         
-        # Listar todas las imágenes
-        image_files = [f for f in os.listdir(directory_path) 
-                      if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+        # Extensiones de imagen válidas
+        valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp')
+        
+        # Listar archivos de imagen
+        image_files = []
+        for f in os.listdir(directory_path):
+            if f.lower().endswith(valid_extensions):
+                image_files.append(f)
         
         if not image_files:
             raise ValueError(f"No se encontraron imágenes en: {directory_path}")
         
-        features = []
+        # Cargar imágenes y extraer características
+        features_list = []
         file_paths = []
         labels = []
-        
-        # Determinar la etiqueta basada en el directorio padre
-        parent_dir = os.path.basename(directory_path)
-        
-        print(f"  Procesando {len(image_files)} imágenes de '{directory_path}'...")
         
         for img_file in image_files:
             img_path = os.path.join(directory_path, img_file)
             
             try:
                 # Cargar imagen
-                img = cv2.imread(img_path)
-                if img is None:
-                    print(f"    [WARN] No se pudo cargar: {img_file}")
+                image = cv2.imread(img_path)
+                if image is None:
+                    print(f"[WARN] No se pudo cargar: {img_path}")
                     continue
                 
-                # Convertir BGR a RGB
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
                 # Extraer características
-                feature = self.extract(img)
+                features = self.extract(image)
                 
-                features.append(feature)
+                features_list.append(features)
                 file_paths.append(img_path)
+                
+                # Etiquetar según nombre de directorio padre
+                parent_dir = os.path.basename(os.path.dirname(img_path))
                 labels.append(parent_dir)
                 
             except Exception as e:
-                print(f"    [ERROR] Error procesando {img_file}: {e}")
+                print(f"[ERROR] Procesando {img_path}: {e}")
                 continue
         
-        if not features:
-            raise ValueError(f"No se pudieron extraer características de ninguna imagen")
+        # Convertir a arrays numpy
+        features_matrix = np.array(features_list) if features_list else np.array([])
         
-        return np.array(features), file_paths, labels
+        return features_matrix, file_paths, labels
     
     def extract_front_and_back(self, front_images, back_images):
         """
@@ -122,15 +153,25 @@ class BodyFeatureExtractor:
             back_images (list): Lista de imágenes de vista posterior.
         
         Returns:
-            dict: Diccionario con características separadas.
+            dict: Diccionario con características separadas {'front': ..., 'back': ...}
         """
-        front_features = self.extract_batch(front_images)
-        back_features = self.extract_batch(back_images)
+        result = {}
         
-        return {
-            'front': front_features,
-            'back': back_features
-        }
+        # Extraer características frontales
+        if front_images:
+            front_features = self.extract_batch(front_images)
+            result['front'] = front_features
+        else:
+            result['front'] = np.array([])
+        
+        # Extraer características posteriores
+        if back_images:
+            back_features = self.extract_batch(back_images)
+            result['back'] = back_features
+        else:
+            result['back'] = np.array([])
+        
+        return result
     
     def extract_and_save(self, image_path, output_path):
         """
@@ -145,38 +186,24 @@ class BodyFeatureExtractor:
         """
         try:
             # Cargar imagen
-            img = cv2.imread(image_path)
-            if img is None:
-                print(f"Error: No se pudo cargar la imagen {image_path}")
-                return False
+            if not os.path.exists(image_path):
+                raise ValueError(f"Imagen no encontrada: {image_path}")
             
-            # Convertir BGR a RGB
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            image = cv2.imread(image_path)
+            if image is None:
+                raise ValueError(f"No se pudo cargar la imagen: {image_path}")
             
             # Extraer características
-            features = self.extract(img)
+            features = self.extract(image)
             
             # Crear directorio si no existe
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            # Guardar en formato numpy
+            # Guardar características
             np.save(output_path, features)
             
             return True
             
         except Exception as e:
-            print(f"Error al extraer y guardar características: {e}")
+            print(f"[ERROR] Guardando características: {e}")
             return False
-    
-    def get_info(self):
-        """
-        Obtiene información del extractor.
-        
-        Returns:
-            dict: Información del extractor.
-        """
-        return {
-            'model': self.model,
-            'embedding_dim': self.embedding_dim,
-            'preprocessor': self.preprocessor.get_info()
-        }
