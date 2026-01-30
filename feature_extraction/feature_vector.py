@@ -1,8 +1,11 @@
 """
-Módulo para gestión de vectores de características.
+Módulo para gestión de vectores de características - SOLO VIDEOS FRONT.
 
 Implementa operaciones sobre vectores de características como comparación,
 distancias, normalización y persistencia.
+
+⚠️ IMPORTANTE: Todos los vectores deben originarse de videos FRONT (frontales).
+Se valida el campo metadata['video_type'] = 'front' en cada operación.
 """
 
 import numpy as np
@@ -21,16 +24,28 @@ class FeatureVector:
         metadata (dict): Información adicional del vector.
     """
     
-    def __init__(self, vector, person_id=None, feature_type='body', metadata=None):
+    def __init__(self, vector, person_id=None, feature_type='body', metadata=None, video_type='front'):
         """
-        Inicializa un vector de características.
+        Inicializa un vector de características (SOLO FRONT).
         
         Args:
             vector (numpy.ndarray): Array del vector.
             person_id (str): ID de la persona.
             feature_type (str): Tipo de característica.
             metadata (dict): Información adicional.
+            video_type (str): Tipo de video ('front'). Default: 'front'.
+                             ❌ No se aceptan videos 'back'.
+        
+        Raises:
+            ValueError: Si video_type no es FRONT.
         """
+        # ✓ Validar que sea video FRONT
+        if video_type.lower() not in ['front', 'frontal']:
+            raise ValueError(
+                f"❌ FeatureVector solo acepta videos FRONT. "
+                f"Se recibió: {video_type}"
+            )
+        
         # Validar y convertir a numpy array
         if isinstance(vector, list):
             vector = np.array(vector, dtype=np.float32)
@@ -46,7 +61,11 @@ class FeatureVector:
         self.vector = vector
         self.person_id = person_id
         self.feature_type = feature_type
+        self.video_type = video_type
         self.metadata = metadata or {}
+        
+        # Garantizar que metadata marca como FRONT
+        self.metadata['video_type'] = 'front'
     
     def compute_distance(self, other_vector, metric='euclidean'):
         """

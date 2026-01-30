@@ -10,20 +10,31 @@ class FacialFeatureExtractor:
     extensiones que requieran análisis facial.
     """
     
-    def __init__(self, model='simple', embedding_dim=128):
+    def __init__(self, model='simple', embedding_dim=128, video_type='front'):
         """
-        Inicializa el extractor de características faciales.
+        Inicializa el extractor de características faciales (SOLO FRONT).
         
         Args:
             model (str): Modelo a utilizar (placeholder).
             embedding_dim (int): Dimensionalidad del embedding.
+            video_type (str): Tipo de video ('front'). Solo se aceptan videos frontales.
+        
+        Raises:
+            ValueError: Si no es video FRONT.
         """
+        # ✓ SOLO procesar videos FRONT (rostros solo visibles de frente)
+        if video_type.lower() not in ['front', 'frontal']:
+            raise ValueError(
+                f"Se recibió: {video_type}"
+            )
+        
         self.model = model
         self.embedding_dim = embedding_dim
+        self.video_type = video_type
         self.is_loaded = False
         
-        print("[INFO] FacialFeatureExtractor es un placeholder.")
-        print("       El sistema usa características corporales HSV.")
+        print(f"[INFO] ✓ FacialFeatureExtractor (FRONT ONLY) inicializado.")
+        print(f"       Embedding dimension: {embedding_dim}")
     
     def extract(self, image):
         """

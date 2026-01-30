@@ -1,9 +1,10 @@
 """
-Módulo para la extracción de fotogramas de videos.
+Módulo para la extracción de fotogramas de videos - SOLO VIDEOS FRONT.
 
-Este módulo implementa la funcionalidad de extraer fotogramas de videos
+Este módulo implementa la funcionalidad de extraer fotogramas de videos FRONTALES
 a una frecuencia aproximada de 10 fotogramas por segundo, detectando
 rostros y cuerpos para generar el dataset procesado.
+
 """
 
 import cv2
@@ -164,7 +165,7 @@ class FrameExtraction:
     
     def extract_frames(self, video_path: str, person_name: str, view_type: str) -> Dict:
         """
-        Extrae fotogramas de un video específico.
+        Extrae fotogramas de un video específico (SOLO si es FRONT).
         
         Args:
             video_path (str): Ruta del archivo de video.
@@ -173,7 +174,23 @@ class FrameExtraction:
         
         Returns:
             dict: Diccionario con estadísticas y rutas de fotogramas extraídos.
+        
+        Raises:
+            ValueError: Si view_type no es 'front'.
         """
+        # ✓ SOLO procesar videos FRONT
+        if view_type.lower() not in ['front', 'frontal']:
+            print(f"❌ [FrameExtraction] RECHAZADO: {video_path}")
+            print(f"   Solo se aceptan videos FRONT. Se recibió: {view_type}")
+            return {
+                'faces_saved': [],
+                'bodies_saved': [],
+                'frames_processed': 0,
+                'frames_with_detection': 0,
+                'success': False,
+                'error': f"Solo se aceptan videos FRONT. Se recibió: {view_type}"
+            }
+        
         result = {
             'faces_saved': [],
             'bodies_saved': [],
@@ -310,7 +327,9 @@ class FrameExtraction:
     
     def process_dataset(self, dataset_path: str) -> Dict:
         """
-        Procesa todos los videos del dataset original.
+        Procesa todos los videos FRONT del dataset original.
+        
+        IMPORTANTE: Solo procesa videos FRONT. Rechaza automáticamente BACK.
         
         Args:
             dataset_path (str): Ruta del dataset con estructura dataset/{persona}/{front|back}
@@ -326,6 +345,7 @@ class FrameExtraction:
             'bodies_front_detected': 0,
             'bodies_back_detected': 0,
             'frames_skipped': 0,
+            'videos_rejected_back': 0,  # ← Contador de videos BACK rechazados
             'errors': []
         }
         
@@ -339,17 +359,22 @@ class FrameExtraction:
         persons = [d for d in os.listdir(dataset_path) 
                    if os.path.isdir(os.path.join(dataset_path, d))]
         
-        self.logger.info(f"Procesando dataset con {len(persons)} personas...")
+        self.logger.info(f"Procesando dataset con {len(persons)} personas (SOLO FRONT)...")
         
         for person_name in persons:
             person_path = os.path.join(dataset_path, person_name)
             self.logger.info(f"Procesando persona: {person_name}")
             
-            # Iterar sobre vistas (front/back)
+            # Iterar sobre vistas
             for view_type in ['front', 'back']:
                 view_path = os.path.join(person_path, view_type)
                 
                 if not os.path.exists(view_path):
+                    continue
+                
+                # ✓ SOLO procesar FRONT, rechazar BACK
+                if view_type.lower() == 'back':
+                    self.stats['videos_rejected_back'] += 1
                     continue
                 
                 # Buscar archivos de video
@@ -366,20 +391,18 @@ class FrameExtraction:
                         error_msg = f"Error procesando {video_path}: {str(e)}"
                         self.logger.error(error_msg)
                         self.stats['errors'].append(error_msg)
-                        # Continuar con el siguiente video
                         continue
         
-        self.logger.info("=" * 50)
-        self.logger.info("EXTRACCIÓN COMPLETADA")
-        self.logger.info(f"Videos procesados: {self.stats['videos_processed']}")
+        self.logger.info("=" * 60)
+        self.logger.info("✓ EXTRACCIÓN COMPLETADA")
+        self.logger.info(f"Videos procesados (FRONT): {self.stats['videos_processed']}")
         self.logger.info(f"Frames extraídos: {self.stats['total_frames_extracted']}")
         self.logger.info(f"Rostros detectados: {self.stats['faces_detected']}")
         self.logger.info(f"Cuerpos frontales: {self.stats['bodies_front_detected']}")
-        self.logger.info(f"Cuerpos traseros: {self.stats['bodies_back_detected']}")
         self.logger.info(f"Frames sin detección: {self.stats['frames_skipped']}")
         if self.stats['errors']:
             self.logger.warning(f"Errores: {len(self.stats['errors'])}")
-        self.logger.info("=" * 50)
+        self.logger.info("=" * 60)
         
         return self.stats
     

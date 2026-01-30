@@ -1,13 +1,15 @@
 """
-Módulo para la extracción de características corporales.
+Módulo para la extracción de características corporales - SOLO VIDEOS FRONT.
 
-Extrae vectores numéricos representativos de cuerpos (vista frontal y posterior)
+Extrae vectores numéricos representativos de cuerpos (VISTA FRONTAL ÚNICAMENTE)
 capturando silueta, proporciones y patrones visuales.
 
-Soporta tres métodos de extracción:
-- 'hog': Histogram of Oriented Gradients (descriptores de forma)
-- 'hsv': Histogramas de color en espacio HSV
-- 'lbp': Local Binary Patterns (descriptores de textura)
+Soporta dos métodos de extracción:
+- 'hog': Histogram of Oriented Gradients (descriptores de forma frontal)
+- 'mfcc': Mel-Frequency Cepstral Coefficients (características de voz/audio frontal)
+
+⚠️ IMPORTANTE: Solo funciona con frames extraídos de videos FRONT (frontales).
+No se procesan datos de videos BACK (posteriores). Ver video_type='front'.
 """
 
 import numpy as np
@@ -27,20 +29,31 @@ class BodyFeatureExtractor:
     """
     
     AVAILABLE_METHODS = {
-        'hog': HOGExtractor
+        'hog': HOGExtractor,
+        'mfcc': MFCCExtractor
     }
     
-    def __init__(self, method='hog', **kwargs):
+    def __init__(self, method='hog', video_type='front', **kwargs):
         """
-        Inicializa el extractor de características corporales.
+        Inicializa el extractor de características corporales (SOLO FRONT).
         
         Args:
-            method (str): Método de extracción ('hog', 'hsv', 'lbp'). Default: 'hog'.
+            method (str): Método de extracción ('hog', 'mfcc'). Default: 'hog'.
+            video_type (str): Tipo de video ('front'). Default: 'front'.
             **kwargs: Parámetros adicionales para el extractor específico.
+                     Para 'mfcc': n_mfcc, n_fft, hop_length, sr
         
         Raises:
-            ValueError: Si el método no es válido.
+            ValueError: Si el método no es válido o si no es video FRONT.
         """
+        # ✓ Validar que sea video FRONT
+        if video_type.lower() not in ['front', 'frontal']:
+            raise ValueError(
+                f"Se recibió: {video_type}"
+            )
+        
+        self.video_type = video_type
+        
         if method not in self.AVAILABLE_METHODS:
             raise ValueError(
                 f"Método '{method}' no válido. Opciones disponibles: {list(self.AVAILABLE_METHODS.keys())}"

@@ -12,17 +12,26 @@ from ultralytics import YOLO
 
 class FaceDetection:
     
-    def __init__(self, model='yolo', confidence_threshold=0.5):
+    def __init__(self, model='yolo', confidence_threshold=0.5, video_type='front'):
         """
-        Inicializa el detector de rostros.
+        Inicializa el detector de rostros (SOLO VIDEOS FRONT).
         
         Args:
             model (str): Nombre del modelo a utilizar.
             confidence_threshold (float): Umbral de confianza mínimo.
+            video_type (str): Tipo de video ('front'). Solo se aceptan videos frontales.
         """
         self.model = model
         self.confidence_threshold = confidence_threshold
         self.detections_count = 0
+        self.video_type = video_type
+        
+        # ✓ SOLO procesar videos FRONT (rostros solo visibles de frente)
+        if video_type.lower() not in ['front', 'frontal']:
+            raise ValueError(
+                f"❌ Solo se aceptan videos FRONT (rostros solo visibles de frente). "
+                f"Se recibió: {video_type}. Use video_type='front'."
+            )
         
         # Cargar modelo de detección
         # Usar YOLOv8n (nano) para detección rápida de rostros
@@ -33,7 +42,7 @@ class FaceDetection:
             raise ValueError("confidence_threshold debe estar entre 0 y 1")
         
         # Inicializar variables de seguimiento
-        print(f"[FaceDetection] Modelo YOLOv8n cargado con umbral {confidence_threshold}")
+        print(f"[FaceDetection] ✓ Modelo YOLOv8n cargado (FRONT ONLY) con umbral {confidence_threshold}")
     
     def detect(self, image):
         """
