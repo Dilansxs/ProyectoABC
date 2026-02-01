@@ -75,6 +75,14 @@ class CommandHandler:
                 'handler': self.preprocess,
                 'description': 'Preprocesar dataset (extracción de frames y augmentation)'
             },
+            'prepare_dataset': {
+                'handler': self.prepare_dataset,
+                'description': 'Crear estructura en data/dataset y distribuir videos desde data/raw'
+            },
+            'extract_audio': {
+                'handler': self.extract_audio,
+                'description': 'Extraer audios de videos BACK y guardarlos en data/datasetPros/audio'
+            },
             'detect': {
                 'handler': self.detect,
                 'description': 'Detectar cuerpos/rostros en imágenes del dataset procesado'
@@ -174,16 +182,26 @@ class CommandHandler:
         if self.preprocessor is not None:
             return self.preprocessor
         
-        from preprocessing.preprocessors import BLPPreprocessor, HSHPreprocessor, LBPPreprocessor
-        
-        if self.preprocessor_type == 'BLP':
-            self.preprocessor = BLPPreprocessor()
-        elif self.preprocessor_type == 'HSH':
-            self.preprocessor = HSHPreprocessor()
-        elif self.preprocessor_type == 'LBP':
-            self.preprocessor = LBPPreprocessor()
-        
-        return self.preprocessor
+        try:
+            from preprocessing.preprocessors import BLPPreprocessor, HSHPreprocessor, LBPPreprocessor
+
+            if self.preprocessor_type == 'BLP':
+                self.preprocessor = BLPPreprocessor()
+            elif self.preprocessor_type == 'HSH':
+                self.preprocessor = HSHPreprocessor()
+            elif self.preprocessor_type == 'LBP':
+                self.preprocessor = LBPPreprocessor()
+
+            return self.preprocessor
+        except Exception:
+            # Fallback: si no existen preprocesadores personalizados, usar HOG como extractor por defecto
+            try:
+                from feature_extraction.hog import HOGExtractor
+                self.preprocessor = HOGExtractor()
+                print("[INFO] Preprocesadores personalizados no encontrados. Usando HOGExtractor como fallback.")
+                return self.preprocessor
+            except Exception as e:
+                raise ImportError(f"No se pudo obtener preprocesador: {e}")
     
     # ==================== COMANDO 1: PREPROCESAR ====================
     def preprocess(self) -> Dict[str, Any]:
@@ -242,7 +260,44 @@ class CommandHandler:
             }
         except Exception as e:
             return {'success': False, 'error': str(e)}
-    
+
+    # ==================== NUEVO: PREPARAR DATASET ====================
+    def prepare_dataset(self, persons: Optional[list] = None, auto_distribute: bool = False, move: bool = False) -> Dict[str, Any]:
+        """
+        Crea la estructura en `data/dataset` para las personas indicadas.
+        Si auto_distribute es True, también intenta distribuir archivos desde `data/raw`.
+        """
+        try:
+            from data import prepare_dataset as ds_prep
+
+            if persons:
+                ds_prep.create_structure(dataset_path=self.DATASET_PATH, persons=persons)
+            else:
+                ds_prep.create_structure(dataset_path=self.DATASET_PATH)
+
+            if auto_distribute:
+                raw_folder = os.path.join(self.BASE_PATH, 'data', 'raw')
+                ds_prep.auto_distribute(raw_folder=raw_folder, dataset_folder=self.DATASET_PATH, move_files=move)
+
+            return {'success': True, 'message': 'Estructura creada y opcionalmente distribuida'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    # ==================== NUEVO: EXTRAER AUDIO (BACK) ====================
+    def extract_audio(self, save_audio: bool = True) -> Dict[str, Any]:
+        """
+        Extrae audios de los videos BACK y los guarda en `data/datasetPros/audio`.
+        """
+        try:
+            from preprocessing.audio_extraction import AudioExtractor
+
+            extractor = AudioExtractor(dataset_path=self.DATASET_PATH, output_path=self.DATASET_PROCESSED_PATH)
+            stats = extractor.process_back_videos(save_audio=save_audio)
+
+            return {'success': True, 'message': 'Extracción de audio completada', 'stats': stats}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     # ==================== COMANDO 2: DETECTAR ====================
     def detect(self) -> Dict[str, Any]:
         """
@@ -365,6 +420,8 @@ class CommandHandler:
         
         try:
             from feature_extraction import FeatureVector
+            from feature_extraction.mfcc import MFCCExtractor
+            from detection.audio_detection import AudioDetection
             
             preprocessor = self._get_preprocessor()
             
@@ -392,28 +449,83 @@ class CommandHandler:
                 except Exception as e:
                     print(f"  [WARN] Error cargando {path}: {e}")
             
-            if not images:
-                return {'success': False, 'error': "No se pudieron cargar las imágenes."}
-            
-            # Extraer características
-            feature_vectors = FeatureVector.from_images_batch(images, preprocessor, valid_labels)
-            feature_matrix = np.array([fv.to_numpy() for fv in feature_vectors])
-            
-            # Guardar características
+            # EXTRAER características de imágenes (si hay)
             features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
             labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
-            
-            np.save(features_file, feature_matrix)
-            np.save(labels_file, np.array(valid_labels))
-            
+
+            if images:
+                # Extraer características
+                feature_vectors = FeatureVector.from_images_batch(images, preprocessor, valid_labels)
+                feature_matrix = np.array([fv.to_numpy() for fv in feature_vectors])
+
+                # Guardar características de imagen
+                np.save(features_file, feature_matrix)
+                np.save(labels_file, np.array(valid_labels))
+
+            else:
+                print("  [INFO] No se encontraron imágenes para extraer características de imagen.")
+
+            # ---------- EXTRAER características MFCC de audios (si hay) ----------
+            audio_paths = []
+            audio_labels = []
+            audio_root = os.path.join(self.DATASET_PROCESSED_PATH, 'audio')
+
+            if os.path.exists(audio_root):
+                for person_id in os.listdir(audio_root):
+                    person_audio_dir = os.path.join(audio_root, person_id)
+                    if os.path.isdir(person_audio_dir):
+                        for f in os.listdir(person_audio_dir):
+                            if f.lower().endswith('.wav'):
+                                audio_paths.append(os.path.join(person_audio_dir, f))
+                                audio_labels.append(person_id)
+
+            audio_features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
+            audio_labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
+
+            if audio_paths:
+                mfcc_extractor = MFCCExtractor()
+                audio_feats = []
+                valid_audio_labels = []
+                ad = AudioDetection()  # default front/back allowed in detector init
+
+                for idx, a_path in enumerate(audio_paths):
+                    try:
+                        # Validar audio para MFCC (opcional)
+                        validation = ad.validate_audio_for_mfcc(a_path)
+                        if not validation['is_valid']:
+                            print(f"  [WARN] Audio inválido para MFCC ({a_path}): {validation['reason']}")
+                            # usar padding de ceros
+                            audio_feats.append(np.zeros(mfcc_extractor.n_mfcc * 2, dtype=np.float32))
+                            valid_audio_labels.append(audio_labels[idx])
+                            continue
+
+                        stats = mfcc_extractor.extract_statistics(a_path)
+                        audio_feats.append(stats)
+                        valid_audio_labels.append(audio_labels[idx])
+                    except Exception as e:
+                        print(f"  [WARN] Error procesando audio {a_path}: {e}")
+                        audio_feats.append(np.zeros(mfcc_extractor.n_mfcc * 2, dtype=np.float32))
+                        valid_audio_labels.append(audio_labels[idx])
+
+                import numpy as _np
+                audio_matrix = _np.vstack(audio_feats).astype(_np.float32)
+                _np.save(audio_features_file, audio_matrix)
+                _np.save(audio_labels_file, _np.array(valid_audio_labels))
+
+                print(f"  MFCC audios extraídos: {audio_matrix.shape} -> {audio_features_file}")
+            else:
+                print("  [INFO] No se encontraron audios para extraer MFCC.")
+
             return {
                 'success': True,
                 'message': "Extracción de características completada",
                 'preprocessor': self.preprocessor_type,
                 'num_images': len(images),
-                'feature_dimension': feature_matrix.shape[1] if len(feature_matrix.shape) > 1 else 0,
-                'features_file': features_file,
-                'labels_file': labels_file
+                'feature_dimension': (feature_matrix.shape[1] if 'feature_matrix' in locals() else 0),
+                'features_file': features_file if images else None,
+                'labels_file': labels_file if images else None,
+                'audio_features_file': audio_features_file if os.path.exists(audio_root) else None,
+                'audio_labels_file': audio_labels_file if os.path.exists(audio_root) else None
             }
         except NotImplementedError as e:
             print(f"  [INFO] Preprocesador {self.preprocessor_type} pendiente de implementación")
@@ -427,48 +539,62 @@ class CommandHandler:
             return {'success': False, 'error': str(e)}
     
     # ==================== COMANDO 4: ENTRENAR SVM ====================
-    def train_svm(self) -> Dict[str, Any]:
+    def train_svm(self, modality: str = 'image') -> Dict[str, Any]:
         """
         Entrena el modelo SVM con las características extraídas.
-        
+
+        Args:
+            modality (str): 'image' para características visuales (default), 'audio' para MFCC.
+
         Returns:
             dict: Resultado del entrenamiento.
         """
-        print(f"\n[ENTRENAR SVM] Iniciando entrenamiento...")
+        print(f"\n[ENTRENAR SVM] Iniciando entrenamiento (modalidad={modality})...")
         print(f"  Características: {self.FEATURES_PATH}")
         print(f"  Modelo salida: {self.SVM_MODEL_PATH}")
-        
-        # Buscar archivo de características
-        features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
-        labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
-        
+
+        # Seleccionar archivo de características según modalidad
+        if modality == 'audio':
+            features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
+            labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
+            model_path = os.path.join(self.MODELS_PATH, 'svm_model_audio.pkl')
+        else:
+            features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+            labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
+            model_path = self.SVM_MODEL_PATH
+
         if not os.path.exists(features_file) or not os.path.exists(labels_file):
             return {
                 'success': False,
                 'error': f"Características no encontradas. Ejecute 'extraer' primero.\nBuscando: {features_file}"
             }
-        
+
         try:
             # Cargar características
             features = np.load(features_file)
             labels = np.load(labels_file, allow_pickle=True)
-            
+
             print(f"  Características cargadas: {features.shape}")
             print(f"  Etiquetas: {len(labels)} ({len(set(labels))} clases)")
-            
+
             from svm_classifier import SVMModel, ModelTrainer
-            
-            trainer = ModelTrainer()
+
+            # Configurar trainer para la modalidad (MFCC o HOG)
+            if modality == 'audio':
+                trainer = ModelTrainer(use_mfcc=True)
+            else:
+                trainer = ModelTrainer(use_hog=True)
+
             model, stats = trainer.train(features, labels)
-            model.save(self.SVM_MODEL_PATH)
-            
+            model.save(model_path)
+
             # Guardar evaluación
             self.last_evaluation = stats
-            
+
             return {
                 'success': True,
                 'message': "Modelo SVM entrenado exitosamente",
-                'model_path': self.SVM_MODEL_PATH,
+                'model_path': model_path,
                 'num_samples': len(labels),
                 'num_classes': len(set(labels)),
                 'statistics': stats

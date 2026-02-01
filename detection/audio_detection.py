@@ -32,16 +32,16 @@ class AudioDetection:
         
         Args:
             sr (int): Frecuencia de muestreo en Hz. Default: 22050.
-            video_type (str): Tipo de video ('front'). Default: 'front'.
-                             ❌ No se aceptan videos 'back'.
+            video_type (str): Tipo de video ('front' o 'back'). Default: 'front'.
+                             Se aceptan vistas frontales y posteriores.
         
         Raises:
-            ValueError: Si video_type no es FRONT.
+            ValueError: Si video_type no es válido.
         """
-        # ✓ SOLO procesar videos FRONT
-        if video_type.lower() not in ['front', 'frontal']:
+        # Aceptar tanto FRONT como BACK
+        if video_type.lower() not in ['front', 'frontal', 'back', 'espalda']:
             raise ValueError(
-                f"❌ AudioDetection solo funciona con videos FRONT. "
+                f"❌ AudioDetection solo acepta video_type 'front' o 'back'. "
                 f"Se recibió: {video_type}"
             )
         
@@ -50,7 +50,7 @@ class AudioDetection:
         self.audio_data = None
         self.video_path = None
         
-        print(f"[AudioDetection] ✓ Detector inicializado (FRONT ONLY) - sr={sr}Hz")
+        print(f"[AudioDetection] ✓ Detector inicializado (FRONT/BACK) - sr={sr}Hz")
     
     def extract_audio_from_video(self, video_path: str) -> Optional[np.ndarray]:
         """
@@ -77,20 +77,50 @@ class AudioDetection:
                 print(f"[AudioDetection] ⚠️ No se pudo abrir: {video_path}")
                 return None
             
-            # Intentar extraer audio usando librosa
-            # (librosa maneja varios formatos de video)
+            # Intentar extraer audio usando librosa (primera opción)
             try:
                 audio, sr = librosa.load(video_path, sr=self.sr, mono=True)
                 self.audio_data = audio
                 self.video_path = video_path
-                
                 print(f"[AudioDetection] ✓ Audio extraído - {len(audio)} muestras, {sr}Hz")
-                return audio
-                
-            except Exception as e:
-                print(f"[AudioDetection] ⚠️ Error extrayendo audio con librosa: {e}")
                 cap.release()
-                return None
+                return audio
+            except Exception as e_lib:
+                print(f"[AudioDetection] ⚠️ Error extrayendo audio con librosa: {e_lib}")
+                # Intentar extraer audio con ffmpeg como fallback
+                try:
+                    import shutil
+                    import tempfile
+                    import subprocess
+
+                    ffmpeg_bin = shutil.which('ffmpeg')
+                    if ffmpeg_bin is None:
+                        raise RuntimeError('ffmpeg no disponible en PATH')
+
+                    tmp_fd, tmp_wav = tempfile.mkstemp(suffix='.wav')
+                    os.close(tmp_fd)
+
+                    cmd = [ffmpeg_bin, '-y', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', str(self.sr), '-ac', '1', tmp_wav]
+                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                    audio, sr = librosa.load(tmp_wav, sr=self.sr, mono=True)
+                    self.audio_data = audio
+                    self.video_path = video_path
+
+                    # Limpiar archivo temporal
+                    try:
+                        os.remove(tmp_wav)
+                    except Exception:
+                        pass
+
+                    print(f"[AudioDetection] ✓ Audio extraído vía ffmpeg - {len(audio)} muestras, {sr}Hz")
+                    cap.release()
+                    return audio
+
+                except Exception as e_ff:
+                    print(f"[AudioDetection] ⚠️ Error extrayendo audio con ffmpeg fallback: {e_ff}")
+                    cap.release()
+                    return None
             
         except Exception as e:
             print(f"[AudioDetection] ❌ Error: {e}")

@@ -123,7 +123,11 @@ def run_interactive_mode(handler: CommandHandler):
             elif option == '4':
                 # Entrenar SVM
                 print("\n" + "─" * 50)
-                result = handler.train_svm()
+                modality = input("¿Entrenar modelo para (1) imagen o (2) audio? [1/2]: ").strip()
+                if modality == '2' or modality.lower() == 'audio':
+                    result = handler.train_svm(modality='audio')
+                else:
+                    result = handler.train_svm(modality='image')
                 print_result(result)
             
             elif option == '5':

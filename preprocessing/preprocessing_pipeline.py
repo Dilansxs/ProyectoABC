@@ -147,14 +147,25 @@ class PreprocessingPipeline:
             }
         
         # Paso 2: Data augmentation
-        self.logger.info("\n[PASO 2/2] Aplicando data augmentation...")
+        self.logger.info("\n[PASO 2/3] Aplicando data augmentation...")
         augmentation_stats = self.augment_only(augmentation_multiplier)
+        
+        # Paso 3: Extraer audios de videos BACK y procesarlos (MFCC)
+        self.logger.info("\n[PASO 3/3] Extrayendo audios de videos BACK...")
+        audio_stats = {'processed': 0, 'saved': 0, 'errors': []}
+        try:
+            from .audio_extraction import AudioExtractor
+            ae = AudioExtractor(dataset_path=self.dataset_path, output_path=self.output_path)
+            audio_stats = ae.process_back_videos(save_audio=True)
+        except Exception as e:
+            self.logger.warning(f"No se pudo extraer audios: {e}")
         
         # Compilar resultados finales
         final_stats = {
             'success': True,
             'extraction_stats': extraction_stats,
             'augmentation_stats': augmentation_stats,
+            'audio_stats': audio_stats,
             'summary': {
                 'videos_processed': extraction_stats['videos_processed'],
                 'total_original_images': extraction_stats['total_frames_extracted'],
@@ -162,7 +173,8 @@ class PreprocessingPipeline:
                 'faces_generated': extraction_stats['faces_detected'],
                 'bodies_front_generated': extraction_stats['bodies_front_detected'],
                 'bodies_back_generated': extraction_stats['bodies_back_detected'],
-                'total_errors': len(extraction_stats['errors']) + len(augmentation_stats['errors'])
+                'audios_saved': audio_stats.get('audios_saved', 0),
+                'total_errors': len(extraction_stats['errors']) + len(augmentation_stats['errors']) + len(audio_stats.get('errors', []))
             }
         }
         
