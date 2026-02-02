@@ -1,5 +1,5 @@
 """
-Extrae y guarda audios de los videos BACK de cada persona del dataset.
+Extrae y guarda audios de los videos de cada persona del dataset.
 
 Guarda archivos WAV en `data/datasetPros/audio/{person}/{video_basename}.wav`.
 """
@@ -13,20 +13,18 @@ class AudioExtractor:
     def __init__(self, dataset_path: str = 'data/dataset', output_path: str = 'data/datasetPros'):
         self.dataset_path = Path(dataset_path)
         self.output_path = Path(output_path)
-        self.detector = AudioDetection(video_type='back')
+        self.detector = AudioDetection()  # now agnostic to view
 
-    def process_back_videos(self, save_audio: Optional[bool] = True) -> dict:
+    def process_person_videos(self, save_audio: Optional[bool] = True) -> dict:
         stats = {'videos_processed': 0, 'audios_saved': 0, 'errors': []}
 
         for person_dir in sorted(self.dataset_path.iterdir()):
             if not person_dir.is_dir():
                 continue
-            back_dir = person_dir / 'back'
-            if not back_dir.exists():
-                continue
 
-            for video in back_dir.iterdir():
-                if not video.is_file():
+            # Process any video files directly in the person folder
+            for video in sorted(person_dir.iterdir()):
+                if not video.is_file() or video.suffix.lower() not in {'.mp4', '.avi', '.mov', '.mkv'}:
                     continue
                 try:
                     out_audio_dir = self.output_path / 'audio' / person_dir.name
@@ -40,7 +38,7 @@ class AudioExtractor:
                     if not result.get('success'):
                         stats['errors'].append({'video': str(video), 'error': result.get('error')})
 
-                    print(f"Procesado: {video.name} - éxito: {result.get('success')}")
+                    print(f"Procesado: {person_dir.name}/{video.name} - éxito: {result.get('success')}")
                 except Exception as e:
                     stats['errors'].append({'video': str(video), 'error': str(e)})
 
@@ -49,6 +47,6 @@ class AudioExtractor:
 
 if __name__ == '__main__':
     extractor = AudioExtractor()
-    stats = extractor.process_back_videos()
+    stats = extractor.process_person_videos()
     print("\nResumen:")
     print(stats)

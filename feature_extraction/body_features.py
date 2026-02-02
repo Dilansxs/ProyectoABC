@@ -1,15 +1,12 @@
 """
-Módulo para la extracción de características corporales - SOLO VIDEOS FRONT.
+Módulo para la extracción de características corporales.
 
-Extrae vectores numéricos representativos de cuerpos (VISTA FRONTAL ÚNICAMENTE)
-capturando silueta, proporciones y patrones visuales.
+Extrae vectores numéricos representativos de cuerpos capturando silueta,
+proporciones y patrones visuales.
 
 Soporta dos métodos de extracción:
-- 'hog': Histogram of Oriented Gradients (descriptores de forma frontal)
-- 'mfcc': Mel-Frequency Cepstral Coefficients (características de voz/audio frontal)
-
-⚠️ IMPORTANTE: Solo funciona con frames extraídos de videos FRONT (frontales).
-No se procesan datos de videos BACK (posteriores). Ver video_type='front'.
+- 'hog': Histogram of Oriented Gradients
+- 'mfcc': Mel-Frequency Cepstral Coefficients (audio)
 """
 
 import numpy as np
@@ -33,27 +30,15 @@ class BodyFeatureExtractor:
         'mfcc': MFCCExtractor
     }
     
-    def __init__(self, method='hog', video_type='front', **kwargs):
+    def __init__(self, method='hog', **kwargs):
         """
-        Inicializa el extractor de características corporales (SOLO FRONT).
+        Inicializa el extractor de características corporales.
         
         Args:
             method (str): Método de extracción ('hog', 'mfcc'). Default: 'hog'.
-            video_type (str): Tipo de video ('front'). Default: 'front'.
             **kwargs: Parámetros adicionales para el extractor específico.
                      Para 'mfcc': n_mfcc, n_fft, hop_length, sr
-        
-        Raises:
-            ValueError: Si el método no es válido o si no es video FRONT.
         """
-        # ✓ Validar que sea video FRONT
-        if video_type.lower() not in ['front', 'frontal']:
-            raise ValueError(
-                f"Se recibió: {video_type}"
-            )
-        
-        self.video_type = video_type
-        
         if method not in self.AVAILABLE_METHODS:
             raise ValueError(
                 f"Método '{method}' no válido. Opciones disponibles: {list(self.AVAILABLE_METHODS.keys())}"
@@ -157,34 +142,20 @@ class BodyFeatureExtractor:
         
         return features_matrix, file_paths, labels
     
-    def extract_front_and_back(self, front_images, back_images):
+    def extract_from_lists(self, images_list):
         """
-        Extrae características de vistas frontal y posterior.
-        
+        Extrae características de una lista de imágenes corporales.
+
         Args:
-            front_images (list): Lista de imágenes de vista frontal.
-            back_images (list): Lista de imágenes de vista posterior.
-        
+            images_list (list): Lista de imágenes de cuerpos.
+
         Returns:
-            dict: Diccionario con características separadas {'front': ..., 'back': ...}
+            numpy.ndarray: Matriz de características (N x feature_dim) o array vacío.
         """
-        result = {}
-        
-        # Extraer características frontales
-        if front_images:
-            front_features = self.extract_batch(front_images)
-            result['front'] = front_features
-        else:
-            result['front'] = np.array([])
-        
-        # Extraer características posteriores
-        if back_images:
-            back_features = self.extract_batch(back_images)
-            result['back'] = back_features
-        else:
-            result['back'] = np.array([])
-        
-        return result
+        if not images_list:
+            return np.array([])
+        return self.extract_batch(images_list)
+
     
     def extract_and_save(self, image_path, output_path):
         """

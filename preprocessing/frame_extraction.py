@@ -1,9 +1,9 @@
 """
-Módulo para la extracción de fotogramas de videos - SOLO VIDEOS FRONT.
+Módulo para la extracción de fotogramas de videos por persona.
 
-Este módulo implementa la funcionalidad de extraer fotogramas de videos FRONTALES
-a una frecuencia aproximada de 10 fotogramas por segundo, detectando
-rostros y cuerpos para generar el dataset procesado.
+Este módulo procesa los videos que estén directamente dentro de cada carpeta
+`data/{person}/{video}.mp4`, extrae frames, detecta cuerpos y genera
+el dataset procesado (carpeta `body/` por persona).
 
 """
 
@@ -15,25 +15,23 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 # Importar detectores del módulo detection
-from detection import FaceDetection, BodyDetection
+from detection import BodyDetection
 
 
 class FrameExtraction:
     """
     Clase encargada de la extracción de fotogramas a partir de archivos de video.
     
-    Extrae frames a 10 FPS, detecta rostros y cuerpos, y los guarda
-    en la estructura requerida para el dataset procesado.
+    Extrae frames a 10 FPS, detecta cuerpos, y los guarda
+    en la estructura de salida por persona (`body/`).
     
     Attributes:
         fps (int): Fotogramas por segundo a extraer del video.
         output_path (str): Ruta donde se almacenarán los fotogramas extraídos.
-        face_resolution (tuple): Resolución de salida para rostros (256x256).
         body_resolution (tuple): Resolución de salida para cuerpos (256x512).
     """
     
     def __init__(self, fps: int = 10, output_path: Optional[str] = None,
-                 face_resolution: Tuple[int, int] = (256, 256),
                  body_resolution: Tuple[int, int] = (256, 512),
                  confidence_threshold: float = 0.5):
         """
@@ -42,34 +40,28 @@ class FrameExtraction:
         Args:
             fps (int): Fotogramas por segundo a extraer (por defecto 10).
             output_path (str): Ruta de salida para los fotogramas.
-            face_resolution (tuple): Resolución para rostros (ancho, alto).
             body_resolution (tuple): Resolución para cuerpos (ancho, alto).
             confidence_threshold (float): Umbral de confianza para detecciones.
         """
         self.fps = fps
         self.output_path = output_path
-        self.face_resolution = face_resolution
         self.body_resolution = body_resolution
         self.confidence_threshold = confidence_threshold
         
         # Inicializar detectores
-        self.face_detector = FaceDetection(confidence_threshold=confidence_threshold)
         self.body_detector = BodyDetection(confidence_threshold=confidence_threshold)
         
         # Estadísticas de extracción
         self.stats = {
             'videos_processed': 0,
             'total_frames_extracted': 0,
-            'faces_detected': 0,
-            'bodies_front_detected': 0,
-            'bodies_back_detected': 0,
+            'bodies_detected': 0,
             'frames_skipped': 0,
             'errors': []
         }
         
         # Configurar logging
-        self._setup_logging()
-    
+        self._setup_logging()    
     def _setup_logging(self):
         """Configura el sistema de logging."""
         self.logger = logging.getLogger('FrameExtraction')
@@ -115,29 +107,7 @@ class FrameExtraction:
         
         return canvas
     
-    def _extract_face_from_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Extrae y recorta el rostro de un frame.
-        
-        Args:
-            frame: Frame del video.
-        
-        Returns:
-            Imagen del rostro recortada y redimensionada, o None si no se detecta.
-        """
-        # Detectar rostros
-        cropped_faces = self.face_detector.detect_and_crop(frame)
-        
-        if not cropped_faces:
-            return None
-        
-        # Tomar el rostro con mayor área (asumimos es el principal)
-        best_face = max(cropped_faces, key=lambda f: f.shape[0] * f.shape[1])
-        
-        # Redimensionar a resolución objetivo
-        face_resized = self._resize_image(best_face, self.face_resolution)
-        
-        return face_resized
+
     
     def _extract_body_from_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -163,36 +133,18 @@ class FrameExtraction:
         
         return body_resized
     
-    def extract_frames(self, video_path: str, person_name: str, view_type: str) -> Dict:
+    def extract_frames(self, video_path: str, person_name: str) -> Dict:
         """
-        Extrae fotogramas de un video específico (SOLO si es FRONT).
+        Extrae fotogramas de un video específico.
         
         Args:
             video_path (str): Ruta del archivo de video.
             person_name (str): Nombre de la persona para organizar carpetas.
-            view_type (str): Tipo de vista ('front' o 'back').
         
         Returns:
             dict: Diccionario con estadísticas y rutas de fotogramas extraídos.
-        
-        Raises:
-            ValueError: Si view_type no es 'front'.
         """
-        # ✓ SOLO procesar videos FRONT
-        if view_type.lower() not in ['front', 'frontal']:
-            print(f"❌ [FrameExtraction] RECHAZADO: {video_path}")
-            print(f"   Solo se aceptan videos FRONT. Se recibió: {view_type}")
-            return {
-                'faces_saved': [],
-                'bodies_saved': [],
-                'frames_processed': 0,
-                'frames_with_detection': 0,
-                'success': False,
-                'error': f"Solo se aceptan videos FRONT. Se recibió: {view_type}"
-            }
-        
         result = {
-            'faces_saved': [],
             'bodies_saved': [],
             'frames_processed': 0,
             'frames_with_detection': 0,
@@ -225,17 +177,12 @@ class FrameExtraction:
         
         # Crear carpetas de salida
         person_output_path = os.path.join(self.output_path, person_name)
-        
-        # Solo extraer rostros de videos frontales
-        if view_type == 'front':
-            face_path = os.path.join(person_output_path, 'face')
-            os.makedirs(face_path, exist_ok=True)
-        
-        body_path = os.path.join(person_output_path, view_type)
+
+        # Carpeta para cuerpos
+        body_path = os.path.join(person_output_path, 'body')
         os.makedirs(body_path, exist_ok=True)
         
-        # Contadores para nomenclatura
-        face_counter = self._get_next_counter(os.path.join(person_output_path, 'face')) if view_type == 'front' else 0
+        # Contador para nomenclatura
         body_counter = self._get_next_counter(body_path)
         
         frame_number = 0
@@ -259,23 +206,7 @@ class FrameExtraction:
                     result['bodies_saved'].append(body_filepath)
                     body_counter += 1
                     detection_found = True
-                    
-                    if view_type == 'front':
-                        self.stats['bodies_front_detected'] += 1
-                    else:
-                        self.stats['bodies_back_detected'] += 1
-                
-                # Extraer rostro solo de videos frontales
-                if view_type == 'front':
-                    face_img = self._extract_face_from_frame(frame)
-                    if face_img is not None:
-                        face_filename = f"img{face_counter:04d}.png"
-                        face_filepath = os.path.join(face_path, face_filename)
-                        cv2.imwrite(face_filepath, face_img)
-                        result['faces_saved'].append(face_filepath)
-                        face_counter += 1
-                        detection_found = True
-                        self.stats['faces_detected'] += 1
+                    self.stats['bodies_detected'] += 1
                 
                 if detection_found:
                     result['frames_with_detection'] += 1
@@ -327,12 +258,10 @@ class FrameExtraction:
     
     def process_dataset(self, dataset_path: str) -> Dict:
         """
-        Procesa todos los videos FRONT del dataset original.
-        
-        IMPORTANTE: Solo procesa videos FRONT. Rechaza automáticamente BACK.
+        Procesa todos los videos dentro de cada carpeta de persona.
         
         Args:
-            dataset_path (str): Ruta del dataset con estructura dataset/{persona}/{front|back}
+            dataset_path (str): Ruta del dataset con estructura dataset/{persona}/{video_files}
         
         Returns:
             dict: Diccionario con estadísticas de extracción.
@@ -341,11 +270,8 @@ class FrameExtraction:
         self.stats = {
             'videos_processed': 0,
             'total_frames_extracted': 0,
-            'faces_detected': 0,
-            'bodies_front_detected': 0,
-            'bodies_back_detected': 0,
+            'bodies_detected': 0,
             'frames_skipped': 0,
-            'videos_rejected_back': 0,  # ← Contador de videos BACK rechazados
             'errors': []
         }
         
@@ -359,46 +285,33 @@ class FrameExtraction:
         persons = [d for d in os.listdir(dataset_path) 
                    if os.path.isdir(os.path.join(dataset_path, d))]
         
-        self.logger.info(f"Procesando dataset con {len(persons)} personas (SOLO FRONT)...")
+        self.logger.info(f"Procesando dataset con {len(persons)} personas...")
         
         for person_name in persons:
             person_path = os.path.join(dataset_path, person_name)
             self.logger.info(f"Procesando persona: {person_name}")
-            
-            # Iterar sobre vistas
-            for view_type in ['front', 'back']:
-                view_path = os.path.join(person_path, view_type)
-                
-                if not os.path.exists(view_path):
+
+            # Buscar archivos de video en la carpeta de la persona
+            video_extensions = ('.mp4', '.avi', '.mov', '.mkv', '.wmv')
+            videos = [f for f in os.listdir(person_path) 
+                      if f.lower().endswith(video_extensions)]
+
+            for video_file in videos:
+                video_path = os.path.join(person_path, video_file)
+
+                try:
+                    self.extract_frames(video_path, person_name)
+                except Exception as e:
+                    error_msg = f"Error procesando {video_path}: {str(e)}"
+                    self.logger.error(error_msg)
+                    self.stats['errors'].append(error_msg)
                     continue
-                
-                # ✓ SOLO procesar FRONT, rechazar BACK
-                if view_type.lower() == 'back':
-                    self.stats['videos_rejected_back'] += 1
-                    continue
-                
-                # Buscar archivos de video
-                video_extensions = ('.mp4', '.avi', '.mov', '.mkv', '.wmv')
-                videos = [f for f in os.listdir(view_path) 
-                          if f.lower().endswith(video_extensions)]
-                
-                for video_file in videos:
-                    video_path = os.path.join(view_path, video_file)
-                    
-                    try:
-                        self.extract_frames(video_path, person_name, view_type)
-                    except Exception as e:
-                        error_msg = f"Error procesando {video_path}: {str(e)}"
-                        self.logger.error(error_msg)
-                        self.stats['errors'].append(error_msg)
-                        continue
         
         self.logger.info("=" * 60)
         self.logger.info("✓ EXTRACCIÓN COMPLETADA")
-        self.logger.info(f"Videos procesados (FRONT): {self.stats['videos_processed']}")
+        self.logger.info(f"Videos procesados: {self.stats['videos_processed']}")
         self.logger.info(f"Frames extraídos: {self.stats['total_frames_extracted']}")
-        self.logger.info(f"Rostros detectados: {self.stats['faces_detected']}")
-        self.logger.info(f"Cuerpos frontales: {self.stats['bodies_front_detected']}")
+        self.logger.info(f"Cuerpos detectados: {self.stats['bodies_detected']}")
         self.logger.info(f"Frames sin detección: {self.stats['frames_skipped']}")
         if self.stats['errors']:
             self.logger.warning(f"Errores: {len(self.stats['errors'])}")

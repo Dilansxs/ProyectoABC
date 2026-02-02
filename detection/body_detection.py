@@ -12,18 +12,10 @@ from ultralytics import YOLO
 
 class BodyDetection:
     
-    def __init__(self, model='yolo', confidence_threshold=0.5, video_type='front'):
+    def __init__(self, model='yolo', confidence_threshold=0.5):
         self.model = model
         self.confidence_threshold = confidence_threshold
         self.detections_count = 0
-        self.video_type = video_type
-        
-        # ✓ SOLO procesar videos FRONT
-        if video_type.lower() not in ['front', 'frontal']:
-            raise ValueError(
-                f"❌ Solo se aceptan videos FRONT. Se recibió: {video_type}. "
-                f"Use video_type='front' para videos frontales."
-            )
         
         # Cargar modelo de detección de cuerpos
         # Usar YOLOv8n (nano) para detección rápida y eficiente
@@ -34,7 +26,7 @@ class BodyDetection:
             raise ValueError("confidence_threshold debe estar entre 0 y 1")
         
         # Inicializar variables de seguimiento
-        print(f"[BodyDetection] ✓ Modelo YOLOv8n cargado (FRONT ONLY) con umbral {confidence_threshold}")
+        print(f"[BodyDetection] ✓ Modelo YOLOv8n cargado con umbral {confidence_threshold}")
     
     def detect(self, image):
         """

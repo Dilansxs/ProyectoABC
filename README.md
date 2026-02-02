@@ -2,7 +2,7 @@
 
 ## Descripción
 
-Sistema integrado de reconocimiento y reidentificación de personas basado en visión por computador. El sistema combina técnicas de detección facial, análisis de apariencia corporal y clasificación mediante SVM para identificar personas en videos.
+Sistema integrado de reidentificación de personas basado en visión por computador, centrado en el análisis de apariencia corporal y clasificación mediante SVM para identificar personas en videos.
 
 ## Estructura del Proyecto
 
@@ -13,14 +13,12 @@ ABCsistema/
 │   ├── frame_extraction.py
 │   ├── data_augmentation.py
 │   └── preprocessing_pipeline.py
-├── detection/              # Detección de rostros y cuerpos
+├── detection/              # Detección de cuerpos
 │   ├── __init__.py
-│   ├── face_detection.py
 │   ├── body_detection.py
 │   └── view_classification.py
 ├── feature_extraction/     # Extracción de características
 │   ├── __init__.py
-│   ├── facial_features.py
 │   ├── body_features.py
 │   └── feature_vector.py
 ├── svm_classifier/         # Clasificador SVM
@@ -44,17 +42,13 @@ ABCsistema/
 ### 1. Preprocesamiento
 - Extracción de fotogramas a ~10 fps desde videos
 - Data augmentation (rotaciones, brillo, reflexiones)
-- Segmentación automática de rostros y cuerpos
-- Clasificación de vistas frontal/posterior
+- Segmentación automática de cuerpos
 
 ### 2. Detección
-- Detección de rostros con modelos de IA
 - Detección de cuerpos completos
-- Clasificación automática de vista corporal
 - Recorte y organización de regiones detectadas
 
 ### 3. Extracción de Características
-- Extracción de embeddings faciales
 - Extracción de características corporales
 - Vectores normalizados para clasificación
 - Cálculo de distancias y similitudes
@@ -113,13 +107,7 @@ python main.py
 ```
 Extrae fotogramas de videos y aplica data augmentation.
 
-#### 2. Entrenar Modelo Facial
-```
-> train_facial <dataset_path> <model_output_path>
-```
-Entrena el modelo de reconocimiento facial.
-
-#### 3. Entrenar Modelo SVM
+#### 2. Entrenar Modelo SVM
 ```
 > train_svm <dataset_path> <model_output_path> [--augmented]
 ```
@@ -143,12 +131,9 @@ Identifica a una persona en una imagen.
 ```
 dataset/
 ├── persona1/
-│   ├── front/
-│   │   └── video1.mp4
-│   └── back/
-│       └── video2.mp4
+│   └── video1.mp4
 ├── persona2/
-│   └── ...
+│   └── video2.mp4
 └── ...
 ```
 
@@ -156,13 +141,7 @@ dataset/
 ```
 datasetPros/
 ├── persona1/
-│   ├── face/
-│   │   ├── img1.jpg
-│   │   └── ...
-│   ├── front/
-│   │   ├── img1.jpg
-│   │   └── ...
-│   └── back/
+│   └── body/
 │       ├── img1.jpg
 │       └── ...
 ├── persona2/
@@ -173,17 +152,15 @@ datasetPros/
 ## Flujo de Procesamiento
 
 1. **Preprocesamiento**: Extrae fotogramas → Aplica augmentation
-2. **Detección**: Detecta rostros y cuerpos → Clasifica vistas
-3. **Extracción**: Genera embeddings faciales y corporales
+2. **Detección**: Detecta cuerpos
+3. **Extracción**: Genera características corporales
 4. **Entrenamiento**: Entrena modelo SVM con características
 5. **Evaluación**: Valida performance con métricas
 6. **Predicción**: Identifica personas en nuevas imágenes
 
 ## Modelos y Versiones
 
-- **Detección Facial**: Cascade Classifier / MTCNN / RetinaFace
 - **Detección de Cuerpos**: YOLO / Faster R-CNN
-- **Embeddings Faciales**: FaceNet / VGGFace2
 - **Características Corporales**: ResNet50 / EfficientNet
 - **Clasificación**: SVM (kernel RBF por defecto)
 

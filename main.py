@@ -2,7 +2,7 @@
 Sistema de reidentificación de personas - Módulo principal.
 
 Este programa implementa un sistema integrado de reconocimiento y reidentificación
-de personas basado en características faciales y corporales.
+de personas basado en características corporales.
 
 Soporta tres tipos de preprocesadores:
 - BLP: Binary Local Patterns
@@ -45,6 +45,7 @@ def show_welcome_message(handler: CommandHandler):
     print("\nPREPROCESADORES DISPONIBLES:")
     print("HSV - Histograma de Hue, Saturation, Value")
     print("\n" + "-" * 60)
+    print("\nNOTA: El pipeline ahora procesa solo 'body' y 'audio' por persona.")
 
 
 def show_menu(handler: CommandHandler) -> str:

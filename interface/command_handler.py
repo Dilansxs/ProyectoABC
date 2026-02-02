@@ -77,15 +77,15 @@ class CommandHandler:
             },
             'prepare_dataset': {
                 'handler': self.prepare_dataset,
-                'description': 'Crear estructura en data/dataset y distribuir videos desde data/raw'
+                'description': 'Crear carpetas por persona en data/dataset (un video por carpeta)'
             },
             'extract_audio': {
                 'handler': self.extract_audio,
-                'description': 'Extraer audios de videos BACK y guardarlos en data/datasetPros/audio'
+                'description': 'Extraer audios de los videos por persona y guardarlos en data/datasetPros/audio'
             },
             'detect': {
                 'handler': self.detect,
-                'description': 'Detectar cuerpos/rostros en imágenes del dataset procesado'
+                'description': 'Detectar cuerpos en imágenes del dataset procesado'
             },
             'extract': {
                 'handler': self.extract_features,
@@ -264,35 +264,57 @@ class CommandHandler:
     # ==================== NUEVO: PREPARAR DATASET ====================
     def prepare_dataset(self, persons: Optional[list] = None, auto_distribute: bool = False, move: bool = False) -> Dict[str, Any]:
         """
-        Crea la estructura en `data/dataset` para las personas indicadas.
-        Si auto_distribute es True, también intenta distribuir archivos desde `data/raw`.
+        Crea las carpetas en `data/dataset` para las personas indicadas.
+        No intenta parsear vistas; cada carpeta de persona debe contener un único video que usted colocará.
         """
         try:
-            from data import prepare_dataset as ds_prep
-
             if persons:
-                ds_prep.create_structure(dataset_path=self.DATASET_PATH, persons=persons)
+                person_list = persons
             else:
-                ds_prep.create_structure(dataset_path=self.DATASET_PATH)
+                person_list = ['unknown']
 
+            for p in person_list:
+                folder = os.path.join(self.DATASET_PATH, p)
+                os.makedirs(folder, exist_ok=True)
+
+            # Opcional: mover/copiar desde data/raw si se solicita
             if auto_distribute:
                 raw_folder = os.path.join(self.BASE_PATH, 'data', 'raw')
-                ds_prep.auto_distribute(raw_folder=raw_folder, dataset_folder=self.DATASET_PATH, move_files=move)
+                if not os.path.exists(raw_folder):
+                    return {'success': False, 'error': f"Raw folder no encontrado: {raw_folder}"}
 
-            return {'success': True, 'message': 'Estructura creada y opcionalmente distribuida'}
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv')
+                for f in os.listdir(raw_folder):
+                    if f.lower().endswith(video_exts):
+                        # intentar detectar persona por prefijo simple
+                        person = f.split('_', 1)[0]
+                        target_dir = os.path.join(self.DATASET_PATH, person)
+                        os.makedirs(target_dir, exist_ok=True)
+                        src = os.path.join(raw_folder, f)
+                        dst = os.path.join(target_dir, f)
+                        if move:
+                            import shutil
+                            shutil.move(src, dst)
+                            action = 'movido'
+                        else:
+                            import shutil
+                            shutil.copy2(src, dst)
+                            action = 'copiado'
+                
+            return {'success': True, 'message': 'Carpetas creadas en data/dataset'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    # ==================== NUEVO: EXTRAER AUDIO (BACK) ====================
+    # ==================== NUEVO: EXTRAER AUDIO (por persona) ====================
     def extract_audio(self, save_audio: bool = True) -> Dict[str, Any]:
         """
-        Extrae audios de los videos BACK y los guarda en `data/datasetPros/audio`.
+        Extrae audios de los videos por persona y los guarda en `data/datasetPros/audio`.
         """
         try:
             from preprocessing.audio_extraction import AudioExtractor
 
             extractor = AudioExtractor(dataset_path=self.DATASET_PATH, output_path=self.DATASET_PROCESSED_PATH)
-            stats = extractor.process_back_videos(save_audio=save_audio)
+            stats = extractor.process_person_videos(save_audio=save_audio)
 
             return {'success': True, 'message': 'Extracción de audio completada', 'stats': stats}
         except Exception as e:
@@ -306,7 +328,7 @@ class CommandHandler:
         Returns:
             dict: Resultado de la detección.
         """
-        print(f"\n[DETECTAR] Iniciando detección de cuerpos/rostros...")
+        print(f"\n[DETECTAR] Iniciando detección de cuerpos...")
         print(f"  Dataset procesado: {self.DATASET_PROCESSED_PATH}")
         
         if not os.path.exists(self.DATASET_PROCESSED_PATH):
@@ -332,31 +354,26 @@ class CommandHandler:
             }
         
         try:
-            from detection import BodyDetection, FaceDetection
+            from detection import BodyDetection
             
             body_detector = BodyDetection()
-            face_detector = FaceDetection()
             
             detections = {
                 'bodies': 0,
-                'faces': 0,
                 'failed': 0
             }
             
-            # Procesar cada imagen
+            # Procesar cada imagen en carpeta 'body'
             for person_id in persons:
                 person_path = os.path.join(self.DATASET_PROCESSED_PATH, person_id)
-                for view in ['front', 'back', 'face']:
-                    view_path = os.path.join(person_path, view)
-                    if os.path.exists(view_path):
-                        for img_file in os.listdir(view_path):
-                            if img_file.lower().endswith(('.jpg', '.png', '.jpeg')):
-                                img_path = os.path.join(view_path, img_file)
-                                # Aquí iría la detección real
-                                if view == 'face':
-                                    detections['faces'] += 1
-                                else:
-                                    detections['bodies'] += 1
+                view = 'body'
+                view_path = os.path.join(person_path, view)
+                if os.path.exists(view_path):
+                    for img_file in os.listdir(view_path):
+                        if img_file.lower().endswith(('.jpg', '.png', '.jpeg')):
+                            img_path = os.path.join(view_path, img_file)
+                            # Aquí iría la detección real
+                            detections['bodies'] += 1
             
             return {
                 'success': True,
@@ -402,13 +419,13 @@ class CommandHandler:
         for person_id in os.listdir(self.DATASET_PROCESSED_PATH):
             person_path = os.path.join(self.DATASET_PROCESSED_PATH, person_id)
             if os.path.isdir(person_path):
-                for view in ['front', 'back']:
-                    view_path = os.path.join(person_path, view)
-                    if os.path.exists(view_path):
-                        for img_file in os.listdir(view_path):
-                            if img_file.lower().endswith(('.jpg', '.png', '.jpeg')):
-                                image_paths.append(os.path.join(view_path, img_file))
-                                labels.append(person_id)
+                view = 'body'
+                view_path = os.path.join(person_path, view)
+                if os.path.exists(view_path):
+                    for img_file in os.listdir(view_path):
+                        if img_file.lower().endswith(('.jpg', '.png', '.jpeg')):
+                            image_paths.append(os.path.join(view_path, img_file))
+                            labels.append(person_id)
         
         if not image_paths:
             return {
@@ -486,7 +503,7 @@ class CommandHandler:
                 mfcc_extractor = MFCCExtractor()
                 audio_feats = []
                 valid_audio_labels = []
-                ad = AudioDetection()  # default front/back allowed in detector init
+                ad = AudioDetection()  # detector de audio (agnóstico a la vista)
 
                 for idx, a_path in enumerate(audio_paths):
                     try:

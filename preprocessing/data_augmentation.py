@@ -1,6 +1,5 @@
 """
-Módulo para data augmentation de imágenes faciales y corporales.
-
+Módulo para data augmentation de imágenes de cuerpos.
 Implementa técnicas de aumento de datos como rotaciones, ajustes de brillo,
 y reflexiones horizontales para mejorar la robustez del modelo.
 """
@@ -339,9 +338,7 @@ class DataAugmentation:
         Estructura esperada:
         dataset_path/
         ├── persona1/
-        │   ├── face/
-        │   ├── front/
-        │   └── back/
+        │   └── body/
         └── ...
         
         Args:
@@ -373,23 +370,23 @@ class DataAugmentation:
             person_input = os.path.join(dataset_path, person_name)
             person_output = os.path.join(output_path, person_name)
             
-            # Procesar cada tipo de carpeta
-            for folder_type in ['face', 'front', 'back']:
-                input_folder = os.path.join(person_input, folder_type)
-                output_folder = os.path.join(person_output, folder_type)
-                
-                if not os.path.exists(input_folder):
-                    continue
-                
-                stats = self.augment_directory(
-                    input_folder, output_folder,
-                    num_augmentations=num_augmentations,
-                    preserve_originals=False  # Ya están en el dataset
-                )
-                
-                global_stats['total_images'] += stats['images_processed']
-                global_stats['total_augmentations'] += stats['augmentations_created']
-                global_stats['errors'].extend(stats['errors'])
+            # Procesar solo cuerpos
+            folder_type = 'body'
+            input_folder = os.path.join(person_input, folder_type)
+            output_folder = os.path.join(person_output, folder_type)
+            
+            if not os.path.exists(input_folder):
+                continue
+            
+            stats = self.augment_directory(
+                input_folder, output_folder,
+                num_augmentations=num_augmentations,
+                preserve_originals=False  # Ya están en el dataset
+            )
+            
+            global_stats['total_images'] += stats['images_processed']
+            global_stats['total_augmentations'] += stats['augmentations_created']
+            global_stats['errors'].extend(stats['errors'])
             
             global_stats['persons_processed'] += 1
         

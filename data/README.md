@@ -5,27 +5,24 @@ Este proyecto espera el siguiente layout para el dataset original:
 ```
 data/
   raw/                # (opcional) videos sin distribuir
-  dataset/            # dataset organizado por persona
+  dataset/            # dataset organizado por persona (UN VIDEO POR CARPETA)
     PERSON_001/
-      front/          # videos frontales (imágenes/frames/rostros)
-      back/           # videos posteriores (audio para MFCC / voz)
+      video1.mp4      # coloque aquí el video con audio para la persona
     PERSON_002/
-      front/
-      back/
+      video1.mp4
 
-  datasetPros/        # salida del preprocesamiento (frames, audios procesados, etc.)
+  datasetPros/        # salida del preprocesamiento (body/, audio/)
   features/           # vectores de características para entrenamiento
 ```
 
 Reglas simples para nombres de archivos (recomendado):
-- Use nombres que incluyan la persona y la vista: `AngeliMicroFrente.mov` o `IvanMicroEspalda.mov`.
-- Palabras clave reconocidas (case-insensitive): `frente`, `front`, `espalda`, `back`.
+- Use nombres que incluyan la persona: `Angeli_video1.mp4` o `Ivan_take1.mov`.
 
-Para crear la estructura vacía y distribuir videos automáticamente desde `data/raw`, use:
+Para crear las carpetas vacías, use el comando `prepare_dataset` del CLI o cree las carpetas manualmente:
 
 ```bash
-python -m data.prepare_dataset --create Angeli Ivan Mateo
-python -m data.prepare_dataset --auto-distribute
+# Crear carpetas para personas
+python main.py --command prepare_dataset --persons Angeli Ivan Mateo
 ```
 
-Si necesita ayuda, puede ejecutar `prepare_dataset` desde el CLI del proyecto (comando `prepare_dataset`).
+Si necesita ayuda, use el comando `help` en la CLI del proyecto (comando `help`).

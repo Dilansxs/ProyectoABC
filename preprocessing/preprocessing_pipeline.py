@@ -20,25 +20,18 @@ class PreprocessingPipeline:
     Clase que coordina el pipeline completo de preprocesamiento.
     
     Transforma el dataset original de videos en un dataset procesado
-    con imágenes de rostros y cuerpos detectados y aumentados.
+    con imágenes de cuerpos detectados y aumentados.
     
     Estructura de entrada (dataset_path):
     dataset/
     ├── persona1/
-    │   ├── front/
-    │   │   └── video1.mp4
-    │   └── back/
-    │       └── video2.mp4
+    │   └── video1.mp4
     └── ...
     
     Estructura de salida (output_path):
     datasetPros/
     ├── persona1/
-    │   ├── face/
-    │   │   └── img0001.png
-    │   ├── front/
-    │   │   └── img0001.png
-    │   └── back/
+    │   └── body/
     │       └── img0001.png
     └── ...
     
@@ -50,7 +43,6 @@ class PreprocessingPipeline:
     """
     
     def __init__(self, dataset_path: str, output_path: str, fps: int = 10,
-                 face_resolution: tuple = (256, 256),
                  body_resolution: tuple = (256, 512),
                  confidence_threshold: float = 0.5):
         """
@@ -60,14 +52,12 @@ class PreprocessingPipeline:
             dataset_path (str): Ruta del dataset original con videos.
             output_path (str): Ruta del dataset procesado de salida.
             fps (int): Fotogramas por segundo a extraer.
-            face_resolution (tuple): Resolución para rostros (ancho, alto).
             body_resolution (tuple): Resolución para cuerpos (ancho, alto).
             confidence_threshold (float): Umbral de confianza para detecciones.
         """
         self.dataset_path = dataset_path
         self.output_path = output_path
         self.fps = fps
-        self.face_resolution = face_resolution
         self.body_resolution = body_resolution
         self.confidence_threshold = confidence_threshold
         
@@ -75,7 +65,6 @@ class PreprocessingPipeline:
         self.frame_extractor = FrameExtraction(
             fps=fps,
             output_path=output_path,
-            face_resolution=face_resolution,
             body_resolution=body_resolution,
             confidence_threshold=confidence_threshold
         )
@@ -143,23 +132,22 @@ class PreprocessingPipeline:
                 'success': False,
                 'extraction_stats': extraction_stats,
                 'augmentation_stats': None,
-                'message': 'No se detectaron rostros ni cuerpos en los videos.'
+                'message': 'No se detectaron cuerpos en los videos.'
             }
         
         # Paso 2: Data augmentation
         self.logger.info("\n[PASO 2/3] Aplicando data augmentation...")
         augmentation_stats = self.augment_only(augmentation_multiplier)
         
-        # Paso 3: Extraer audios de videos BACK y procesarlos (MFCC)
-        self.logger.info("\n[PASO 3/3] Extrayendo audios de videos BACK...")
+        # Paso 3: Extraer audios de los videos por persona y procesarlos (MFCC)
+        self.logger.info("\n[PASO 3/3] Extrayendo audios de los videos por persona...")
         audio_stats = {'processed': 0, 'saved': 0, 'errors': []}
         try:
             from .audio_extraction import AudioExtractor
             ae = AudioExtractor(dataset_path=self.dataset_path, output_path=self.output_path)
-            audio_stats = ae.process_back_videos(save_audio=True)
+            audio_stats = ae.process_person_videos(save_audio=True)
         except Exception as e:
-            self.logger.warning(f"No se pudo extraer audios: {e}")
-        
+            self.logger.warning(f"No se pudo extraer audios: {e}")        
         # Compilar resultados finales
         final_stats = {
             'success': True,
@@ -170,9 +158,7 @@ class PreprocessingPipeline:
                 'videos_processed': extraction_stats['videos_processed'],
                 'total_original_images': extraction_stats['total_frames_extracted'],
                 'total_augmented_images': augmentation_stats['total_augmentations'],
-                'faces_generated': extraction_stats['faces_detected'],
-                'bodies_front_generated': extraction_stats['bodies_front_detected'],
-                'bodies_back_generated': extraction_stats['bodies_back_detected'],
+                'bodies_generated': extraction_stats['bodies_detected'],
                 'audios_saved': audio_stats.get('audios_saved', 0),
                 'total_errors': len(extraction_stats['errors']) + len(augmentation_stats['errors']) + len(audio_stats.get('errors', []))
             }
@@ -247,9 +233,7 @@ class PreprocessingPipeline:
         # Contar archivos en el output
         file_counts = {
             'total_images': 0,
-            'faces': 0,
-            'front': 0,
-            'back': 0,
+            'body': 0,
             'persons': 0
         }
         
@@ -261,13 +245,13 @@ class PreprocessingPipeline:
             for person in persons:
                 person_path = os.path.join(self.output_path, person)
                 
-                for folder in ['face', 'front', 'back']:
-                    folder_path = os.path.join(person_path, folder)
-                    if os.path.exists(folder_path):
-                        count = len([f for f in os.listdir(folder_path) 
-                                     if f.endswith('.png')])
-                        file_counts[folder] += count
-                        file_counts['total_images'] += count
+                folder = 'body'
+                folder_path = os.path.join(person_path, folder)
+                if os.path.exists(folder_path):
+                    count = len([f for f in os.listdir(folder_path) 
+                                 if f.endswith('.png')])
+                    file_counts[folder] += count
+                    file_counts['total_images'] += count
         
         return {
             'extraction_completed': self.pipeline_status['extraction_completed'],
@@ -331,7 +315,7 @@ class PreprocessingPipeline:
         report.append("")
         report.append("CONFIGURACIÓN:")
         report.append(f"  - FPS de extracción: {self.fps}")
-        report.append(f"  - Resolución rostros: {self.face_resolution}")
+        # Resolución rostros removida: ahora sólo se procesan cuerpos
         report.append(f"  - Resolución cuerpos: {self.body_resolution}")
         report.append(f"  - Umbral de confianza: {self.confidence_threshold}")
         report.append("")
@@ -341,9 +325,7 @@ class PreprocessingPipeline:
         report.append("")
         report.append("CONTEO DE ARCHIVOS:")
         report.append(f"  - Personas: {status['file_counts']['persons']}")
-        report.append(f"  - Rostros: {status['file_counts']['faces']}")
-        report.append(f"  - Cuerpos frontales: {status['file_counts']['front']}")
-        report.append(f"  - Cuerpos traseros: {status['file_counts']['back']}")
+        report.append(f"  - Cuerpos detectados: {status['file_counts']['body']}")
         report.append(f"  - Total imágenes: {status['file_counts']['total_images']}")
         report.append("")
         report.append("=" * 60)
@@ -369,7 +351,6 @@ def create_pipeline(dataset_path: str = "data/dataset",
         dataset_path=dataset_path,
         output_path=output_path,
         fps=fps,
-        face_resolution=(256, 256),
         body_resolution=(256, 512),
         confidence_threshold=0.5
     )

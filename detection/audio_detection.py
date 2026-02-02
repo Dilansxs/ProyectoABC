@@ -19,38 +19,20 @@ class AudioDetection:
     
     Extrae el stream de audio de un video, detecta presencia de voz
     y lo prepara para extracción de características MFCC.
-    
-    Attributes:
-        sr (int): Frecuencia de muestreo en Hz (22050 por defecto).
-        audio_data (np.ndarray): Datos de audio extraído.
-        video_path (str): Ruta del video procesado.
     """
     
-    def __init__(self, sr: int = 22050, video_type: str = 'front'):
+    def __init__(self, sr: int = 22050):
         """
         Inicializa el detector de audio.
         
         Args:
             sr (int): Frecuencia de muestreo en Hz. Default: 22050.
-            video_type (str): Tipo de video ('front' o 'back'). Default: 'front'.
-                             Se aceptan vistas frontales y posteriores.
-        
-        Raises:
-            ValueError: Si video_type no es válido.
         """
-        # Aceptar tanto FRONT como BACK
-        if video_type.lower() not in ['front', 'frontal', 'back', 'espalda']:
-            raise ValueError(
-                f"❌ AudioDetection solo acepta video_type 'front' o 'back'. "
-                f"Se recibió: {video_type}"
-            )
-        
         self.sr = sr
-        self.video_type = video_type
         self.audio_data = None
         self.video_path = None
         
-        print(f"[AudioDetection] ✓ Detector inicializado (FRONT/BACK) - sr={sr}Hz")
+        print(f"[AudioDetection] ✓ Detector inicializado - sr={sr}Hz")
     
     def extract_audio_from_video(self, video_path: str) -> Optional[np.ndarray]:
         """
@@ -291,7 +273,7 @@ class AudioDetection:
     
     def process_video(self, video_path: str, save_audio: Optional[str] = None) -> Dict:
         """
-        Procesa un video FRONT: extrae audio y lo prepara para MFCC.
+        Procesa un video: extrae audio y lo prepara para MFCC.
         
         Args:
             video_path (str): Ruta del video.
@@ -327,8 +309,20 @@ class AudioDetection:
             # Guardar audio si se especifica
             if save_audio:
                 os.makedirs(os.path.dirname(save_audio), exist_ok=True)
-                librosa.output.write_wav(save_audio, audio, sr=self.sr)
-                print(f"[AudioDetection] ✓ Audio guardado: {save_audio}")
+                # Preferir soundfile si está disponible, sino fallback a scipy
+                try:
+                    import soundfile as sf
+                    sf.write(save_audio, audio, self.sr, subtype='PCM_16')
+                    print(f"[AudioDetection] ✓ Audio guardado (soundfile): {save_audio}")
+                except Exception:
+                    try:
+                        from scipy.io import wavfile
+                        wav_int16 = (audio * 32767).astype('int16')
+                        wavfile.write(save_audio, self.sr, wav_int16)
+                        print(f"[AudioDetection] ✓ Audio guardado (scipy): {save_audio}")
+                    except Exception as e:
+                        print(f"[AudioDetection] ❌ Error guardando audio: {e}")
+                        raise
             
             return {
                 'audio': audio,
@@ -417,10 +411,10 @@ def example_usage():
     """Ejemplo de cómo usar AudioDetection."""
     
     # Crear detector
-    audio_detector = AudioDetection(sr=22050, video_type='front')
+    audio_detector = AudioDetection(sr=22050)
     
-    # Procesar video FRONT
-    video_path = "videos/person_001_front.mp4"
+    # Procesar video (ejemplo)
+    video_path = "videos/person_001.mp4"
     
     result = audio_detector.process_video(video_path)
     
