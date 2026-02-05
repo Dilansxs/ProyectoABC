@@ -3,6 +3,13 @@ Módulo para la detección y extracción de audio/voz de videos.
 
 Implementa funcionalidades de extracción de audio de videos,
 detección de voz y preprocesamiento para características MFCC.
+
+Soporta múltiples backends para extracción:
+1. librosa + soundfile (ideal - Python 3.13 compatible)
+2. ffmpeg via subprocess (si está disponible en PATH)
+
+IMPORTANTE: Requiere ffmpeg instalado en el sistema
+Descarga desde: https://ffmpeg.org/download.html
 """
 
 import cv2
@@ -10,6 +17,8 @@ import numpy as np
 import librosa
 import librosa.display
 import os
+import subprocess
+import tempfile
 from typing import Optional, Tuple, List, Dict
 
 
@@ -34,9 +43,105 @@ class AudioDetection:
         
         print(f"[AudioDetection] ✓ Detector inicializado - sr={sr}Hz")
     
+    def _extract_with_ffmpeg_subprocess(self, video_path: str) -> Optional[np.ndarray]:
+        """
+        Usa ffmpeg directamente vía subprocess.
+        Funciona si ffmpeg está en PATH del sistema.
+        
+        Args:
+            video_path: Ruta del video
+        
+        Returns:
+            Array de audio o None
+        """
+        try:
+            print(f"[AudioDetection] Intentando con ffmpeg subprocess...")
+            
+            # Crear archivo temporal para WAV
+            tmp_fd, tmp_wav = tempfile.mkstemp(suffix='.wav')
+            os.close(tmp_fd)
+            
+            try:
+                # Usar ffmpeg para extraer audio
+                cmd = [
+                    'ffmpeg',
+                    '-y',  # Sobrescribir archivos
+                    '-i', video_path,
+                    '-vn',  # No video
+                    '-acodec', 'pcm_s16le',  # Codec PCM
+                    '-ar', str(self.sr),  # Sample rate
+                    '-ac', '1',  # Mono
+                    tmp_wav
+                ]
+                
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=60
+                )
+                
+                # Cargar WAV con librosa
+                audio_array, sr = librosa.load(tmp_wav, sr=self.sr, mono=True)
+                
+                print(f"[AudioDetection] ✓ Audio extraído con ffmpeg - {len(audio_array)} muestras")
+                return audio_array.astype(np.float32)
+            
+            finally:
+                # Limpiar archivo temporal
+                try:
+                    os.remove(tmp_wav)
+                except:
+                    pass
+        
+        except FileNotFoundError:
+            print(f"[AudioDetection] ⚠️  ffmpeg no está en PATH del sistema")
+            return None
+        except subprocess.TimeoutExpired:
+            print(f"[AudioDetection] ⚠️  ffmpeg timeout (video muy largo)")
+            return None
+        except Exception as e:
+            print(f"[AudioDetection] ⚠️  ffmpeg subprocess falló: {e}")
+            return None
+    
+    def _try_librosa_with_backends(self, video_path: str) -> Optional[np.ndarray]:
+        """
+        Intenta cargar audio con librosa intentando diferentes backends.
+        
+        Args:
+            video_path: Ruta del video
+        
+        Returns:
+            Array de audio o None
+        """
+        try:
+            print(f"[AudioDetection] Intentando con librosa...")
+            
+            # Silenciar warnings de librosa
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                audio_array, sr = librosa.load(
+                    video_path,
+                    sr=self.sr,
+                    mono=True
+                )
+            
+            print(f"[AudioDetection] ✓ Audio extraído con librosa - {len(audio_array)} muestras")
+            return audio_array.astype(np.float32)
+        
+        except Exception as e:
+            print(f"[AudioDetection] ⚠️  librosa falló: {str(e)[:100]}")
+            return None
+    
     def extract_audio_from_video(self, video_path: str) -> Optional[np.ndarray]:
         """
         Extrae el stream de audio de un video.
+        
+        Intenta en orden:
+        1. librosa (directo) - Python 3.13 compatible
+        2. ffmpeg via subprocess (si está en PATH del sistema)
         
         Args:
             video_path (str): Ruta del archivo de video.
@@ -51,62 +156,29 @@ class AudioDetection:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video no encontrado: {video_path}")
         
-        try:
-            # Abrir video con OpenCV
-            cap = cv2.VideoCapture(video_path)
-            
-            if not cap.isOpened():
-                print(f"[AudioDetection] ⚠️ No se pudo abrir: {video_path}")
-                return None
-            
-            # Intentar extraer audio usando librosa (primera opción)
+        print(f"\n[AudioDetection] Extrayendo audio de: {os.path.basename(video_path)}")
+        
+        # Estrategia de backends: intentar en orden
+        backends = [
+            ("librosa", self._try_librosa_with_backends),
+            ("ffmpeg (sistema)", self._extract_with_ffmpeg_subprocess),
+        ]
+        
+        for backend_name, backend_func in backends:
             try:
-                audio, sr = librosa.load(video_path, sr=self.sr, mono=True)
-                self.audio_data = audio
-                self.video_path = video_path
-                print(f"[AudioDetection] ✓ Audio extraído - {len(audio)} muestras, {sr}Hz")
-                cap.release()
-                return audio
-            except Exception as e_lib:
-                print(f"[AudioDetection] ⚠️ Error extrayendo audio con librosa: {e_lib}")
-                # Intentar extraer audio con ffmpeg como fallback
-                try:
-                    import shutil
-                    import tempfile
-                    import subprocess
-
-                    ffmpeg_bin = shutil.which('ffmpeg')
-                    if ffmpeg_bin is None:
-                        raise RuntimeError('ffmpeg no disponible en PATH')
-
-                    tmp_fd, tmp_wav = tempfile.mkstemp(suffix='.wav')
-                    os.close(tmp_fd)
-
-                    cmd = [ffmpeg_bin, '-y', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', str(self.sr), '-ac', '1', tmp_wav]
-                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-                    audio, sr = librosa.load(tmp_wav, sr=self.sr, mono=True)
+                audio = backend_func(video_path)
+                if audio is not None and len(audio) > 0:
                     self.audio_data = audio
                     self.video_path = video_path
-
-                    # Limpiar archivo temporal
-                    try:
-                        os.remove(tmp_wav)
-                    except Exception:
-                        pass
-
-                    print(f"[AudioDetection] ✓ Audio extraído vía ffmpeg - {len(audio)} muestras, {sr}Hz")
-                    cap.release()
                     return audio
-
-                except Exception as e_ff:
-                    print(f"[AudioDetection] ⚠️ Error extrayendo audio con ffmpeg fallback: {e_ff}")
-                    cap.release()
-                    return None
-            
-        except Exception as e:
-            print(f"[AudioDetection] ❌ Error: {e}")
-            return None
+            except Exception as e:
+                print(f"[AudioDetection] ⚠️  {backend_name} error: {str(e)[:80]}")
+                continue
+        
+        print(f"[AudioDetection] ❌ No se pudo extraer audio con ningún backend")
+        print(f"    Asegúrate de que ffmpeg esté instalado: https://ffmpeg.org/download.html")
+        return None
+    
     
     def detect_voice_presence(self, audio_data: Optional[np.ndarray] = None,threshold: float = 0.02) -> Dict:
         """
@@ -141,11 +213,9 @@ class AudioDetection:
         frame_length = 2048
         hop_length = 512
         
-        S = librosa.feature.melspectrogram(y=audio_data, sr=self.sr, 
-                                          n_fft=frame_length,
-                                          hop_length=hop_length)
+        S = librosa.feature.melspectrogram(y=audio_data, sr=self.sr, n_fft=frame_length, hop_length=hop_length)
         
-        # Convertir a dB
+        # Convertir a dB 
         S_db = librosa.power_to_db(S, ref=np.max)
         
         # Calcular energía media por frame
@@ -177,8 +247,7 @@ class AudioDetection:
             'voice_frames': voice_frames
         }
     
-    def segment_audio_by_voice(self, audio_data: Optional[np.ndarray] = None,
-                              threshold: float = 0.02) -> List[np.ndarray]:
+    def segment_audio_by_voice(self, audio_data: Optional[np.ndarray] = None, threshold: float = 0.02) -> List[np.ndarray]:
         """
         Segmenta el audio en partes con voz.
         

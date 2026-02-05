@@ -1,4 +1,7 @@
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix, roc_curve, auc
+from sklearn.preprocessing import label_binarize
+import numpy as np
+import matplotlib.pyplot as plt
 
 class ModelEvaluator:
     """
@@ -20,6 +23,13 @@ class ModelEvaluator:
         
         conf_matrix = confusion_matrix(labels, predictions, labels=model.classes_)
         
+        # Calcular probabilidades para la curva ROC (One-vs-Rest)
+        try:
+            decision_function = model.decision_function(features)
+            roc_data = self._calculate_roc_curves(labels, decision_function, model.classes_)
+        except:
+            roc_data = None
+        
         return {
             'accuracy': float(accuracy),
             'precision_avg': float(precision_avg),
@@ -30,8 +40,70 @@ class ModelEvaluator:
             'f1_per_class': {cls: float(f) for cls, f in zip(model.classes_, f1)},
             'support_per_class': {cls: int(s) for cls, s in zip(model.classes_, support)},
             'confusion_matrix': conf_matrix.tolist(),
-            'classes': list(model.classes_)
+            'classes': list(model.classes_),
+            'roc_data': roc_data
         }
+    
+    def _calculate_roc_curves(self, labels, decision_function, classes):
+        """
+        Calcula curvas ROC para cada clase (One-vs-Rest).
+        """
+        n_classes = len(classes)
+        
+        # Binarizar las etiquetas
+        y_bin = label_binarize(labels, classes=classes)
+        if n_classes == 2:
+            y_bin = np.column_stack([1 - y_bin, y_bin])
+        
+        roc_curves = {}
+        
+        for i, cls in enumerate(classes):
+            fpr, tpr, _ = roc_curve(y_bin[:, i], decision_function[:, i])
+            roc_auc = auc(fpr, tpr)
+            roc_curves[cls] = {
+                'fpr': fpr.tolist(),
+                'tpr': tpr.tolist(),
+                'auc': float(roc_auc)
+            }
+        
+        return roc_curves
+    
+    def plot_roc_curves(self, metrics, save_path=None):
+        """
+        Grafica las curvas ROC para todas las clases.
+        
+        Args:
+            metrics: Diccionario de métricas de evaluate()
+            save_path: Ruta para guardar la imagen (opcional)
+        """
+        if not metrics.get('roc_data'):
+            print("❌ No hay datos ROC disponibles")
+            return
+        
+        plt.figure(figsize=(12, 8))
+        
+        for cls, roc_info in metrics['roc_data'].items():
+            fpr = roc_info['fpr']
+            tpr = roc_info['tpr']
+            auc_score = roc_info['auc']
+            plt.plot(fpr, tpr, label=f'{cls} (AUC = {auc_score:.3f})', linewidth=2)
+        
+        # Línea diagonal (clasificador aleatorio)
+        plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
+        
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate', fontsize=12)
+        plt.ylabel('True Positive Rate', fontsize=12)
+        plt.title('Curvas ROC - One-vs-Rest', fontsize=14, fontweight='bold')
+        plt.legend(loc="lower right", fontsize=10)
+        plt.grid(alpha=0.3)
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✓ Curva ROC guardada: {save_path}")
+        
+        plt.show()
     
     def generate_report(self, metrics):
         report = "\n" + "="*60 + "\n"
@@ -54,6 +126,14 @@ class ModelEvaluator:
             report += f"  Recall:    {metrics['recall_per_class'][cls]:.4f}\n"
             report += f"  F1-Score:  {metrics['f1_per_class'][cls]:.4f}\n"
             report += f"  Muestras:  {metrics['support_per_class'][cls]}\n"
+        
+        # Agregar AUC-ROC si está disponible
+        if metrics.get('roc_data'):
+            report += f"\n{'─'*60}\n"
+            report += "Áreas bajo la Curva ROC (AUC):\n"
+            report += f"{'─'*60}\n"
+            for cls, roc_info in metrics['roc_data'].items():
+                report += f"  {cls}: {roc_info['auc']:.4f}\n"
         
         report += "\n" + "="*60 + "\n"
         

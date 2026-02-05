@@ -503,19 +503,10 @@ class CommandHandler:
                 mfcc_extractor = MFCCExtractor()
                 audio_feats = []
                 valid_audio_labels = []
-                ad = AudioDetection()  # detector de audio (agnóstico a la vista)
 
                 for idx, a_path in enumerate(audio_paths):
                     try:
-                        # Validar audio para MFCC (opcional)
-                        validation = ad.validate_audio_for_mfcc(a_path)
-                        if not validation['is_valid']:
-                            print(f"  [WARN] Audio inválido para MFCC ({a_path}): {validation['reason']}")
-                            # usar padding de ceros
-                            audio_feats.append(np.zeros(mfcc_extractor.n_mfcc * 2, dtype=np.float32))
-                            valid_audio_labels.append(audio_labels[idx])
-                            continue
-
+                        # Extraer características MFCC directamente de la ruta
                         stats = mfcc_extractor.extract_statistics(a_path)
                         audio_feats.append(stats)
                         valid_audio_labels.append(audio_labels[idx])
@@ -556,86 +547,147 @@ class CommandHandler:
             return {'success': False, 'error': str(e)}
     
     # ==================== COMANDO 4: ENTRENAR SVM ====================
-    def train_svm(self, modality: str = 'image') -> Dict[str, Any]:
+    def train_svm(self, modality: str = 'fusion') -> Dict[str, Any]:
         """
-        Entrena el modelo SVM con las características extraídas.
+        Entrena el modelo SVM con características.
+        
+        Soporta tres modalidades:
+        - 'fusion': HOG + MFCC combinados (RECOMENDADO - multimodal)
+        - 'image': Solo HOG de imágenes
+        - 'audio': Solo MFCC de audios
 
         Args:
-            modality (str): 'image' para características visuales (default), 'audio' para MFCC.
+            modality (str): 'fusion' (default), 'image', o 'audio'.
 
         Returns:
             dict: Resultado del entrenamiento.
         """
-        print(f"\n[ENTRENAR SVM] Iniciando entrenamiento (modalidad={modality})...")
-        print(f"  Características: {self.FEATURES_PATH}")
-        print(f"  Modelo salida: {self.SVM_MODEL_PATH}")
-
-        # Seleccionar archivo de características según modalidad
-        if modality == 'audio':
-            features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
-            labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
-            model_path = os.path.join(self.MODELS_PATH, 'svm_model_audio.pkl')
-        else:
-            features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
-            labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
-            model_path = self.SVM_MODEL_PATH
-
-        if not os.path.exists(features_file) or not os.path.exists(labels_file):
-            return {
-                'success': False,
-                'error': f"Características no encontradas. Ejecute 'extraer' primero.\nBuscando: {features_file}"
-            }
+        print(f"\n{'='*70}")
+        print(f"ENTRENAMIENTO DEL MODELO SVM")
+        print(f"Modalidad: {modality.upper()}")
+        print(f"{'='*70}")
 
         try:
-            # Cargar características
-            features = np.load(features_file)
-            labels = np.load(labels_file, allow_pickle=True)
-
-            print(f"  Características cargadas: {features.shape}")
-            print(f"  Etiquetas: {len(labels)} ({len(set(labels))} clases)")
-
-            from svm_classifier import SVMModel, ModelTrainer
-
-            # Configurar trainer para la modalidad (MFCC o HOG)
-            if modality == 'audio':
-                trainer = ModelTrainer(use_mfcc=True)
+            from svm_classifier import ModelTrainer
+            
+            if modality == 'fusion':
+                print("\n🔗 Modo FUSIÓN: HOG + MFCC")
+                print(f"   Cargando desde: {self.DATASET_PROCESSED_PATH}")
+                print(f"   Audios desde:   {os.path.join(self.DATASET_PROCESSED_PATH, 'audio')}")
+                
+                # Crear trainer con fusión automática
+                trainer = ModelTrainer(
+                    train_test_split_ratio=0.8,
+                    use_fusion=True
+                )
+                
+                # Entrenar con carga automática de características fusionadas
+                model, metrics = trainer.train(
+                    X=None,  # None = cargar automáticamente
+                    y=None,
+                    validate=True,
+                    dataset_processed_path=self.DATASET_PROCESSED_PATH,
+                    audio_base_dir=os.path.join(self.DATASET_PROCESSED_PATH, 'audio')
+                )
+                
+                model_path = os.path.join(self.MODELS_PATH, 'svm_model_fusion.pkl')
+            
+            elif modality == 'image':
+                print("\n🖼️  Modo IMAGEN: Solo HOG")
+                
+                # Cargar características de imagen
+                features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+                labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
+                
+                if not os.path.exists(features_file) or not os.path.exists(labels_file):
+                    return {
+                        'success': False,
+                        'error': f"Características de imagen no encontradas.\nEjecute 'preprocess' y 'extract' primero."
+                    }
+                
+                features = np.load(features_file)
+                labels = np.load(labels_file, allow_pickle=True)
+                
+                print(f"   Características cargadas: {features.shape}")
+                print(f"   Etiquetas: {len(labels)} ({len(set(labels))} clases)")
+                
+                trainer = ModelTrainer(use_fusion=False)
+                model, metrics = trainer.train(features, labels, validate=True)
+                model_path = os.path.join(self.MODELS_PATH, 'svm_model_image.pkl')
+            
+            elif modality == 'audio':
+                print("\n🔊 Modo AUDIO: Solo MFCC (con replicación de datos)")
+                
+                # Cargar características de audio
+                features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
+                labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
+                
+                if not os.path.exists(features_file) or not os.path.exists(labels_file):
+                    return {
+                        'success': False,
+                        'error': f"Características de audio no encontradas.\nEjecute 'extract_audio' primero."
+                    }
+                
+                features = np.load(features_file)
+                labels = np.load(labels_file, allow_pickle=True)
+                
+                print(f"   Características originales: {features.shape}")
+                print(f"   Etiquetas originales: {len(labels)} ({len(set(labels))} clases)")
+                
+                # REPLICAR audios para que haya suficientes muestras (al menos 30 por clase)
+                try:
+                    img_features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+                    n_images = len(np.load(img_features_file))
+                    n_replicas = max(30, n_images // len(set(labels)))
+                except:
+                    n_replicas = 30
+                
+                print(f"   Replicando {n_replicas} veces cada audio...")
+                
+                features_replicated = np.repeat(features, n_replicas, axis=0)
+                labels_replicated = np.repeat(labels, n_replicas)
+                
+                print(f"   ✓ Características después de replicación: {features_replicated.shape}")
+                print(f"   ✓ Etiquetas después: {len(labels_replicated)} ({len(set(labels_replicated))} clases)")
+                
+                trainer = ModelTrainer(use_fusion=False)
+                model, metrics = trainer.train(features_replicated, labels_replicated, validate=True)
+                model_path = os.path.join(self.MODELS_PATH, 'svm_model_audio.pkl')
+            
             else:
-                trainer = ModelTrainer(use_hog=True)
-
-            model, stats = trainer.train(features, labels)
+                return {
+                    'success': False,
+                    'error': f"Modalidad '{modality}' no válida. Use: 'fusion', 'image', 'audio'"
+                }
+            
+            if model is None:
+                return {
+                    'success': False,
+                    'error': "Error durante el entrenamiento"
+                }
+            
+            # Guardar modelo
+            os.makedirs(self.MODELS_PATH, exist_ok=True)
             model.save(model_path)
-
+            
             # Guardar evaluación
-            self.last_evaluation = stats
-
+            self.last_evaluation = metrics
+            
+            print(f"\n{'='*70}")
+            print(f"✓ MODELO GUARDADO: {model_path}")
+            print(f"{'='*70}\n")
+            
             return {
                 'success': True,
-                'message': "Modelo SVM entrenado exitosamente",
+                'message': f"Modelo SVM ({modality}) entrenado y guardado exitosamente",
                 'model_path': model_path,
-                'num_samples': len(labels),
-                'num_classes': len(set(labels)),
-                'statistics': stats
+                'metrics': metrics
             }
-        except (ImportError, NotImplementedError):
-            print("  [INFO] Clasificador SVM pendiente de implementación")
-            
-            # Simular estadísticas de evaluación
-            unique_labels = list(set(labels)) if 'labels' in dir() else ['persona1', 'persona2']
-            self.last_evaluation = {
-                'accuracy': 0.0,
-                'precision': 0.0,
-                'recall': 0.0,
-                'f1_score': 0.0,
-                'num_classes': len(unique_labels),
-                'status': 'placeholder'
-            }
-            
-            return {
-                'success': True,
-                'message': "Entrenamiento (placeholder) - SVM no implementado",
-                'model_path': self.SVM_MODEL_PATH
-            }
+        
         except Exception as e:
+            print(f"\n❌ Error durante entrenamiento: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
     # ==================== COMANDO 5: VER EVALUACIÓN ====================
@@ -643,112 +695,180 @@ class CommandHandler:
         """
         Muestra la evaluación del modelo entrenado.
         
+        Busca modelos en orden de prioridad: fusion > image > audio
+        
         Returns:
             dict: Métricas de evaluación.
         """
         print(f"\n[EVALUACIÓN] Mostrando resultados...")
         
-        if not os.path.exists(self.SVM_MODEL_PATH):
+        # Buscar modelos en orden de prioridad
+        model_candidates = [
+            os.path.join(self.MODELS_PATH, 'svm_model_fusion.pkl'),
+            os.path.join(self.MODELS_PATH, 'svm_model_image.pkl'),
+            os.path.join(self.MODELS_PATH, 'svm_model_audio.pkl'),
+            self.SVM_MODEL_PATH  # Path default
+        ]
+        
+        model_path = None
+        for candidate in model_candidates:
+            if os.path.exists(candidate):
+                model_path = candidate
+                model_type = candidate.split('_')[-1].replace('.pkl', '')
+                print(f"✓ Modelo encontrado: {model_type}")
+                break
+        
+        if model_path is None:
             return {
                 'success': False,
                 'error': "Modelo no encontrado. Ejecute 'entrenar' primero."
             }
         
+        # Si hay evaluación en caché, retornarla
         if self.last_evaluation is not None:
             return {
                 'success': True,
                 'message': "Evaluación del modelo",
-                'model_path': self.SVM_MODEL_PATH,
+                'model_path': model_path,
                 'metrics': self.last_evaluation
             }
         
         try:
             from svm_classifier import SVMModel, ModelEvaluator
             
-            # Cargar modelo y datos de prueba
-            model = SVMModel.load(self.SVM_MODEL_PATH)
+            # Cargar modelo
+            model = SVMModel.load(model_path)
             
-            features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
-            labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
+            # Determinar qué características usar basado en el tipo de modelo
+            if 'fusion' in model_path:
+                # Para modelos de fusión, cargar ambas características y fusionarlas
+                img_features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+                img_labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
+                audio_features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
+                audio_labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
+                
+                if all(os.path.exists(f) for f in [img_features_file, img_labels_file, audio_features_file, audio_labels_file]):
+                    img_features = np.load(img_features_file)
+                    img_labels = np.load(img_labels_file, allow_pickle=True)
+                    audio_features = np.load(audio_features_file)
+                    
+                    # Replicar audio para emparejar con imágenes
+                    n_images = len(img_features)
+                    n_audio = len(audio_features)
+                    n_replicas = max(1, n_images // n_audio)
+                    
+                    audio_features_expanded = np.repeat(audio_features, n_replicas, axis=0)
+                    if len(audio_features_expanded) > n_images:
+                        audio_features_expanded = audio_features_expanded[:n_images]
+                    
+                    features = np.hstack([img_features, audio_features_expanded])
+                    labels = img_labels
+                else:
+                    return {'success': False, 'error': "Características fusionadas no encontradas"}
             
-            if os.path.exists(features_file) and os.path.exists(labels_file):
+            elif 'audio' in model_path:
+                # Modelo de audio
+                features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
+                labels_file = os.path.join(self.FEATURES_PATH, 'labels_audio.npy')
+                
+                if not os.path.exists(features_file) or not os.path.exists(labels_file):
+                    return {'success': False, 'error': "Características de audio no encontradas"}
+                
                 features = np.load(features_file)
                 labels = np.load(labels_file, allow_pickle=True)
                 
-                evaluator = ModelEvaluator()
-                metrics = evaluator.evaluate(model, features, labels)
+                # Replicar para evaluación (mismo que en entrenamiento)
+                try:
+                    img_features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+                    n_images = len(np.load(img_features_file))
+                    n_replicas = max(30, n_images // len(set(labels)))
+                except:
+                    n_replicas = 30
                 
-                self.last_evaluation = metrics
-                
-                return {
-                    'success': True,
-                    'message': "Evaluación completada",
-                    'metrics': metrics
-                }
+                features = np.repeat(features, n_replicas, axis=0)
+                labels = np.repeat(labels, n_replicas)
+            
             else:
-                return {
-                    'success': False,
-                    'error': "Archivo de características no encontrado para evaluación."
-                }
-        except (ImportError, NotImplementedError):
+                # Modelo de imagen (default)
+                features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
+                labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
+                
+                if not os.path.exists(features_file) or not os.path.exists(labels_file):
+                    return {'success': False, 'error': "Características de imagen no encontradas"}
+                
+                features = np.load(features_file)
+                labels = np.load(labels_file, allow_pickle=True)
+            
+            # Evaluar
+            evaluator = ModelEvaluator()
+            metrics = evaluator.evaluate(model, features, labels)
+            
+            self.last_evaluation = metrics
+            
+            # Información adicional
+            print(f"\n📊 MÉTRICAS DE EVALUACIÓN")
+            print(f"{'='*60}")
+            print(f"  Accuracy:  {metrics['accuracy']:.4f}")
+            print(f"  Precision: {metrics['precision_avg']:.4f}")
+            print(f"  Recall:    {metrics['recall_avg']:.4f}")
+            print(f"  F1-Score:  {metrics['f1_avg']:.4f}")
+            print(f"{'='*60}\n")
+            
             return {
                 'success': True,
-                'message': "Evaluación (placeholder) - Evaluador no implementado",
-                'metrics': {
-                    'accuracy': 0.0,
-                    'precision': 0.0,
-                    'recall': 0.0,
-                    'f1_score': 0.0,
-                    'status': 'placeholder - modelo no evaluado'
-                }
+                'message': "Evaluación completada",
+                'model_type': 'fusion' if 'fusion' in model_path else 'audio' if 'audio' in model_path else 'image',
+                'model_path': model_path,
+                'metrics': metrics
             }
+        
         except Exception as e:
+            print(f"❌ Error durante evaluación: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
     # ==================== COMANDO 6: AUTOMÁTICO ====================
     def run_automatic(self) -> Dict[str, Any]:
         """
-        Ejecuta el pipeline completo automáticamente:
-        1. Preprocesar
-        2. Detectar
-        3. Extraer características
-        4. Entrenar SVM
-        5. Mostrar evaluación
+        Ejecuta el pipeline completo automáticamente (MULTIMODAL: HOG + MFCC):
+        1. Preprocesar (extraer frames + audios)
+        2. Extraer características HOG + MFCC
+        3. Entrenar SVM multimodal (FUSIÓN)
+        4. Mostrar evaluación
         
         Returns:
             dict: Resultado de todo el proceso.
         """
-        print("\n" + "=" * 60)
-        print("   EJECUCIÓN AUTOMÁTICA DEL PIPELINE COMPLETO")
-        print("=" * 60)
-        print(f"\nPreprocesador seleccionado: {self.preprocessor_type}")
-        print(f"Dataset: {self.DATASET_PATH}")
+        print("\n" + "=" * 70)
+        print("   🚀 EJECUCIÓN AUTOMÁTICA - PIPELINE MULTIMODAL (HOG + MFCC)")
+        print("=" * 70)
+        print(f"\nDataset: {self.DATASET_PATH}")
         print(f"Dataset procesado: {self.DATASET_PROCESSED_PATH}")
-        print(f"Modelo: {self.SVM_MODEL_PATH}")
-        print("\n" + "-" * 60)
+        print(f"Audios: {os.path.join(self.DATASET_PROCESSED_PATH, 'audio')}")
+        print(f"Modelo de salida: {os.path.join(self.MODELS_PATH, 'svm_model_fusion.pkl')}")
+        print("\n" + "-" * 70)
         
         results = {
             'preprocess': None,
-            'detect': None,
-            'extract': None,
-            'train': None,
+            'train_fusion': None,
             'evaluate': None
         }
         
+        # Pasos simplificados para el pipeline multimodal
         steps = [
-            ('preprocess', 'PASO 1/5: Preprocesamiento', self.preprocess),
-            ('detect', 'PASO 2/5: Detección', self.detect),
-            ('extract', 'PASO 3/5: Extracción de características', self.extract_features),
-            ('train', 'PASO 4/5: Entrenamiento SVM', self.train_svm),
-            ('evaluate', 'PASO 5/5: Evaluación', self.evaluate)
+            ('preprocess', '⚙️  PASO 1/3: Preprocesamiento (Frames + Audios)', self.preprocess),
+            ('train_fusion', '🔗 PASO 2/3: Entrenamiento SVM Multimodal (HOG + MFCC)', 
+             lambda: self.train_svm(modality='fusion')),
+            ('evaluate', '📊 PASO 3/3: Evaluación del Modelo', self.evaluate)
         ]
         
         all_success = True
         
         for step_key, step_name, step_func in steps:
-            print(f"\n{'─' * 50}")
+            print(f"\n{'─' * 70}")
             print(f"  {step_name}")
-            print(f"{'─' * 50}")
+            print(f"{'─' * 70}")
             
             try:
                 result = step_func()
@@ -759,26 +879,38 @@ class CommandHandler:
                 else:
                     print(f"  ✗ Error: {result.get('error', 'Error desconocido')}")
                     all_success = False
-                    # Continuar con el siguiente paso aunque falle
+                    if step_key == 'preprocess':
+                        # Si falla preprocesamiento, no continuar
+                        print("\n  ⚠️  Abortando - Necesario preprocesamiento exitoso")
+                        break
             except Exception as e:
                 print(f"  ✗ Excepción: {e}")
+                import traceback
+                traceback.print_exc()
                 results[step_key] = {'success': False, 'error': str(e)}
                 all_success = False
         
-        print("\n" + "=" * 60)
-        print("   RESUMEN DE EJECUCIÓN")
-        print("=" * 60)
+        print("\n" + "=" * 70)
+        print("   📋 RESUMEN DE EJECUCIÓN")
+        print("=" * 70)
         
         for step_key, step_name, _ in steps:
             result = results[step_key]
             status = "✓" if result and result.get('success') else "✗"
             print(f"  {status} {step_name.split(':')[1].strip()}")
         
-        print("=" * 60)
+        print("=" * 70 + "\n")
+        
+        if all_success:
+            print(f"✅ PIPELINE COMPLETADO EXITOSAMENTE")
+            print(f"\n   Modelo guardado: {os.path.join(self.MODELS_PATH, 'svm_model_fusion.pkl')}")
+            print(f"   Puedes usar 'evaluate' para ver más detalles\n")
+        else:
+            print(f"⚠️  Pipeline completado con errores\n")
         
         return {
             'success': all_success,
-            'message': "Pipeline automático completado" if all_success else "Pipeline completado con errores",
+            'message': "Pipeline multimodal completado" if all_success else "Pipeline completado con errores",
             'results': results
         }
     

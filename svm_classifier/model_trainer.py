@@ -5,182 +5,207 @@ from .model_evaluator import ModelEvaluator
 
 import numpy as np
 from typing import Optional, Dict, Any
+import logging
 
 # Extractors y detectores
 from feature_extraction.hog import HOGExtractor
 from feature_extraction.mfcc import MFCCExtractor
+from feature_extraction.feature_fusion import FeatureFusion
 from detection.audio_detection import AudioDetection
 
 
 class ModelTrainer:
     """
-    Entrenador para el modelo SVM con soporte para características HOG (imagen)
-    y MFCC (audio). También puede validar audio usando AudioDetection antes
-    de extraer MFCC.
-
-    Parámetros opcionales:
-      - use_hog (bool): extraer HOG si se proporcionan imágenes.
-      - use_mfcc (bool): extraer MFCC si se proporcionan audios.
-      - use_audio_detection (bool): validar audio con AudioDetection antes de MFCC.
+    Entrenador para modelo SVM multimodal (HOG + MFCC).
+    
+    Soporta dos modos:
+    1. FUSIÓN AUTOMÁTICA: Carga datos de data/datasetPros y data/datasetPros/audio
+       Usa FeatureFusion para combinar HOG (imagen) + MFCC (audio)
+    
+    2. MANUAL: Acepta características ya calculadas o brutos imágenes/audios
+    
+    Características fusionadas: (1764 + 26) = 1790 dimensiones
+    - HOG: 1764 (características de forma del cuerpo)
+    - MFCC: 26 (media y desviación estándar de 13 coeficientes)
     """
     
     def __init__(
         self,
         train_test_split_ratio: float = 0.8,
-        use_hog: bool = False,
-        use_mfcc: bool = False,
-        use_audio_detection: bool = False,
+        use_fusion: bool = True,
         hog_params: Optional[Dict[str, Any]] = None,
-        mfcc_params: Optional[Dict[str, Any]] = None,
-        audio_params: Optional[Dict[str, Any]] = None
+        mfcc_params: Optional[Dict[str, Any]] = None
     ):
+        """
+        Inicializa el entrenador.
+        
+        Args:
+            train_test_split_ratio: Ratio train/test (default 0.8)
+            use_fusion: Usar FeatureFusion automático (default True)
+            hog_params: Parámetros para HOG
+            mfcc_params: Parámetros para MFCC
+        """
         self.train_test_split_ratio = train_test_split_ratio
-        self.use_hog = use_hog
-        self.use_mfcc = use_mfcc
-        self.use_audio_detection = use_audio_detection
-
+        self.use_fusion = use_fusion
         self.hog_params = hog_params or {}
         self.mfcc_params = mfcc_params or {}
-        self.audio_params = audio_params or {}
-
-        # Instanciar extractores según sea necesario
-        self.hog_extractor = HOGExtractor(**self.hog_params) if self.use_hog else None
-        self.mfcc_extractor = MFCCExtractor(**self.mfcc_params) if self.use_mfcc else None
-        self.audio_detector = AudioDetection(**self.audio_params) if self.use_audio_detection else None
+        
+        # Instanciar fusionador si está habilitado
+        if self.use_fusion:
+            self.feature_fusion = FeatureFusion(
+                hog_params=self.hog_params,
+                mfcc_params=self.mfcc_params,
+                use_audio_validation=True
+            )
+        else:
+            self.feature_fusion = None
+        
+        # Logging
+        self._setup_logging()
     
-    def _prepare_features(self, features):
-        """
-        Acepta:
-          - np.ndarray ya calculado (se usa tal cual)
-          - dict con claves 'images' (lista/ndarray de imágenes) y/o 'audios' (lista de arrays o rutas)
-          - dict con claves 'hog' y/o 'mfcc' que ya contienen matrices de características
-
-        Retorna una matriz numpy (N, D) lista para entrenar/evaluar.
-        """
-        # Si ya es numpy array, asumimos que es la matriz de características
-        if isinstance(features, np.ndarray):
-            return features
-
-        if not isinstance(features, dict):
-            raise TypeError('features debe ser np.ndarray o dict con imágenes/audios/características')
-
-        hog_feats = None
-        mfcc_feats = None
-
-        # Si ya vienen características precalculadas
-        if 'hog' in features:
-            hog_feats = np.array(features['hog'], dtype=np.float32)
-        if 'mfcc' in features:
-            mfcc_feats = np.array(features['mfcc'], dtype=np.float32)
-
-        # Extraer a partir de imágenes
-        if hog_feats is None and self.use_hog and 'images' in features:
-            images = features['images']
-            if not isinstance(images, (list, np.ndarray)) or len(images) == 0:
-                raise ValueError('images debe ser una lista/ndarray no vacía')
-            hog_feats = self.hog_extractor.extract_batch(list(images))
-
-        # Extraer a partir de audios
-        if mfcc_feats is None and self.use_mfcc and 'audios' in features:
-            audios = features['audios']
-            if not isinstance(audios, (list, np.ndarray)) or len(audios) == 0:
-                raise ValueError('audios debe ser una lista/ndarray no vacía')
-
-            mfcc_list = []
-            for idx, audio in enumerate(audios):
-                # Si usamos detector, validar
-                if self.audio_detector is not None:
-                    # El detector espera ruta o array; se usa validate_audio_for_mfcc
-                    try:
-                        validation = self.audio_detector.validate_audio_for_mfcc(audio)
-                        if not validation['is_valid']:
-                            print(f"[ModelTrainer] ⚠️ Audio index {idx} no válido para MFCC: {validation['reason']}. Se usará padding de ceros.")
-                            # Usar vector de ceros en caso de invalidación
-                            mfcc_list.append(np.zeros(self.mfcc_extractor.n_mfcc * 2 if hasattr(self.mfcc_extractor, 'n_mfcc') else 13*2, dtype=np.float32))
-                            continue
-                    except Exception as e:
-                        print(f"[ModelTrainer] ⚠️ Error validando audio index {idx}: {e}. Omitiendo...")
-                        mfcc_list.append(np.zeros(self.mfcc_extractor.n_mfcc * 2 if hasattr(self.mfcc_extractor, 'n_mfcc') else 13*2, dtype=np.float32))
-                        continue
-
-                # Extraer estadísticas MFCC (vector tamaño fijo)
-                try:
-                    stats = self.mfcc_extractor.extract_statistics(audio)
-                    mfcc_list.append(stats)
-                except Exception as e:
-                    print(f"[ModelTrainer] ⚠️ Error extrayendo MFCC index {idx}: {e}. Usando ceros como fallback.")
-                    mfcc_list.append(np.zeros(self.mfcc_extractor.n_mfcc * 2 if hasattr(self.mfcc_extractor, 'n_mfcc') else 13*2, dtype=np.float32))
-
-            mfcc_feats = np.vstack(mfcc_list).astype(np.float32)
-
-        # Comprobar compatibilidad de tamaños
-        N = None
-        if hog_feats is not None:
-            N = hog_feats.shape[0]
-        if mfcc_feats is not None:
-            if N is None:
-                N = mfcc_feats.shape[0]
-            elif mfcc_feats.shape[0] != N:
-                raise ValueError('El número de muestras en HOG y MFCC no coincide')
-
-        if hog_feats is not None and mfcc_feats is not None:
-            # Concatenar características
-            return np.concatenate([hog_feats, mfcc_feats], axis=1)
-        elif hog_feats is not None:
-            return hog_feats
-        elif mfcc_feats is not None:
-            return mfcc_feats
-
-        raise ValueError('No se encontraron características para preparar. Verifique los parámetros y entradas.')
+    def _setup_logging(self):
+        """Configura logging."""
+        self.logger = logging.getLogger('ModelTrainer')
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '[%(asctime)s] %(levelname)s - %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
     
-    def train(self, features, labels, validate=True):
-        print(f"\n{'='*60}")
-        print("ENTRENAMIENTO DEL MODELO SVM")
-        print(f"{'='*60}")
-
-        # Preparar características si es necesario
-        X = self._prepare_features(features)
-
+    def load_fused_features(self, 
+                           dataset_processed_path: str = 'data/datasetPros',
+                           audio_base_dir: str = 'data/datasetPros/audio') -> tuple:
+        """
+        Carga características fusionadas HOG + MFCC usando FeatureFusion.
+        
+        Args:
+            dataset_processed_path: Ruta de data/datasetPros
+            audio_base_dir: Ruta de data/datasetPros/audio
+        
+        Returns:
+            Tupla (X, labels) con características fusionadas
+        """
+        if not self.use_fusion:
+            raise ValueError("use_fusion debe ser True para usar load_fused_features")
+        
+        self.logger.info("Cargando características fusionadas...")
+        X, labels = self.feature_fusion.fuse_features(
+            dataset_processed_path=dataset_processed_path,
+            audio_base_dir=audio_base_dir
+        )
+        
+        return X, labels
+    
+    def train(self, X=None, y=None, validate=True,
+              dataset_processed_path: str = 'data/datasetPros',
+              audio_base_dir: str = 'data/datasetPros/audio'):
+        """
+        Entrena el modelo SVM.
+        
+        Dos modos:
+        1. AUTOMÁTICO: Si X=None, carga características fusionadas del disco
+        2. MANUAL: Si X y y se proporcionan, usa esas características
+        
+        Args:
+            X: Características (None para cargar automáticamente)
+            y: Etiquetas (None para cargar automáticamente)
+            validate: Hacer split train/test
+            dataset_processed_path: Ruta de data/datasetPros
+            audio_base_dir: Ruta de data/datasetPros/audio
+        
+        Returns:
+            Tupla (model, metrics)
+        """
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info("ENTRENAMIENTO DEL MODELO SVM MULTIMODAL (HOG + MFCC)")
+        self.logger.info("=" * 70)
+        
+        # Cargar características si no se proporcionan
+        if X is None or y is None:
+            if not self.use_fusion:
+                raise ValueError("Se deben proporcionar X e y, o habilitar use_fusion=True")
+            X, y = self.load_fused_features(
+                dataset_processed_path=dataset_processed_path,
+                audio_base_dir=audio_base_dir
+            )
+        
+        # Validaciones
+        if len(X) == 0:
+            self.logger.error("No hay características para entrenar")
+            return None, None
+        
+        self.logger.info(f"\n✓ Características cargadas: {X.shape}")
+        self.logger.info(f"  - Muestras: {X.shape[0]}")
+        self.logger.info(f"  - Dimensiones: {X.shape[1]}")
+        if self.feature_fusion:
+            info = self.feature_fusion.get_feature_info()
+            self.logger.info(f"  - HOG: {info['hog_dim']}")
+            self.logger.info(f"  - MFCC: {info['mfcc_dim']}")
+        
+        # Crear modelo
         model = SVMModel(kernel='rbf', C=1.0, gamma='scale')
         
         if validate:
+            # Split train/test
             X_train, X_test, y_train, y_test = train_test_split(
-                X, labels,
+                X, y,
                 test_size=(1 - self.train_test_split_ratio),
-                stratify=labels,
+                stratify=y,
                 random_state=42
             )
             
-            print(f"\nDatos de entrenamiento: {len(X_train)}")
-            print(f"Datos de prueba: {len(X_test)}")
-            modalities = []
-            if self.use_hog:
-                modalities.append('HOG')
-            if self.use_mfcc:
-                modalities.append('MFCC')
-            print(f"Usando modalidades: {', '.join(modalities) if modalities else 'features numéricas'}")
-
+            self.logger.info(f"\n📊 División Train/Test:")
+            self.logger.info(f"  - Entrenamiento: {len(X_train)} muestras ({self.train_test_split_ratio:.0%})")
+            self.logger.info(f"  - Prueba: {len(X_test)} muestras ({1-self.train_test_split_ratio:.0%})")
+            self.logger.info(f"  - Clases: {len(set(y))}")
+            
+            # Entrenar
+            self.logger.info(f"\n🔄 Entrenando SVM...")
             train_info = model.train(X_train, y_train)
             
-            print(f"\n✓ Entrenamiento completado en {train_info['training_time']:.2f}s")
-            print(f"  - Muestras: {train_info['num_samples']}")
-            print(f"  - Clases: {train_info['num_classes']}")
+            self.logger.info(f"\n✓ Entrenamiento completado en {train_info['training_time']:.2f}s")
+            self.logger.info(f"  - Kernel: rbf")
+            self.logger.info(f"  - C: 1.0")
+            self.logger.info(f"  - Clases: {train_info['num_classes']}")
             
+            # Evaluar
+            self.logger.info(f"\n📈 Evaluando en datos de prueba...")
             evaluator = ModelEvaluator()
             metrics = evaluator.evaluate(model, X_test, y_test)
             
-            print(f"\nMétricas de evaluación:")
-            print(f"  - Accuracy: {metrics['accuracy']:.4f}")
-            print(f"  - Precision (promedio): {metrics['precision_avg']:.4f}")
-            print(f"  - Recall (promedio): {metrics['recall_avg']:.4f}")
-            print(f"  - F1-Score (promedio): {metrics['f1_avg']:.4f}")
+            self.logger.info(f"\n" + "─" * 70)
+            self.logger.info(f"MÉTRICAS DE EVALUACIÓN")
+            self.logger.info(f"─" * 70)
+            self.logger.info(f"  • Accuracy:  {metrics['accuracy']:.4f} ({metrics['accuracy']*100:.2f}%)")
+            self.logger.info(f"  • Precision: {metrics['precision_avg']:.4f}")
+            self.logger.info(f"  • Recall:    {metrics['recall_avg']:.4f}")
+            self.logger.info(f"  • F1-Score:  {metrics['f1_avg']:.4f}")
+            self.logger.info(f"─" * 70)
+            
+            # Por clase
+            self.logger.info(f"\nMÉTRICAS POR CLASE:")
+            for cls in metrics['classes']:
+                self.logger.info(f"\n  {cls}:")
+                self.logger.info(f"    Precision: {metrics['precision_per_class'][cls]:.4f}")
+                self.logger.info(f"    Recall:    {metrics['recall_per_class'][cls]:.4f}")
+                self.logger.info(f"    F1-Score:  {metrics['f1_per_class'][cls]:.4f}")
+                self.logger.info(f"    Muestras:  {metrics['support_per_class'][cls]}")
+            
+            self.logger.info("\n" + "=" * 70)
             
             return model, metrics
+        
         else:
-            train_info = model.train(X, labels)
+            # Entrenar con todos los datos
+            self.logger.info(f"\n🔄 Entrenando SVM (sin validación)...")
+            train_info = model.train(X, y)
             
-            print(f"\n✓ Entrenamiento completado en {train_info['training_time']:.2f}s")
-            print(f"  - Muestras totales: {train_info['num_samples']}")
-            print(f"  - Clases: {train_info['num_classes']}")
+            self.logger.info(f"\n✓ Entrenamiento completado en {train_info['training_time']:.2f}s")
+            self.logger.info(f"  - Muestras totales: {train_info['num_samples']}")
+            self.logger.info(f"  - Clases: {train_info['num_classes']}")
             
             return model, {'training_info': train_info}

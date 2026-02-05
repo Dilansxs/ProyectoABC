@@ -124,9 +124,11 @@ def run_interactive_mode(handler: CommandHandler):
             elif option == '4':
                 # Entrenar SVM
                 print("\n" + "─" * 50)
-                modality = input("¿Entrenar modelo para (1) imagen o (2) audio? [1/2]: ").strip()
+                modality = input("¿Entrenar modelo para (1) imagen, (2) audio o (3) FUSIÓN? [1/2/3]: ").strip()
                 if modality == '2' or modality.lower() == 'audio':
                     result = handler.train_svm(modality='audio')
+                elif modality == '3' or modality.lower() == 'fusion':
+                    result = handler.train_svm(modality='fusion')
                 else:
                     result = handler.train_svm(modality='image')
                 print_result(result)
