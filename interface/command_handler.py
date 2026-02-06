@@ -546,6 +546,106 @@ class CommandHandler:
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+    # ==================== COMANDO 3b: AUGMENTACIÓN DE AUDIOS ====================
+    def augment_audio_dataset(self) -> Dict[str, Any]:
+        """
+        Aplica augmentación de datos a todos los audios del dataset.
+        
+        Genera variaciones de cada audio para evitar replicación artificial:
+        - Pitch shifting (±2, ±4 semitonos)
+        - Time stretching (±5% velocidad)
+        - Gaussian noise
+        - Dynamic range compression
+        
+        Resultado: data/audios_augmented/{person}/audio_*_aug{00-15}.wav
+        
+        Ventajas:
+        - Evita replicación artificial (7 audios → 7×15 = 105 audios variados)
+        - Mejora generalización del modelo
+        - Crea diversidad real en las muestras de entrenamiento
+        
+        Returns:
+            dict con estadísticas de augmentación
+        """
+        try:
+            print("\n" + "="*70)
+            print("🎵 AUGMENTACIÓN DE AUDIOS - Generando variaciones de datos")
+            print("="*70)
+            
+            from preprocessing.audio_augmentation import AudioAugmentation
+            
+            # Verificar que hay audios originales
+            audio_dir = os.path.join(self.BASE_PATH, 'data', 'datasetPros', 'audio')
+            if not os.path.exists(audio_dir):
+                print(f"❌ No se encontraron audios en: {audio_dir}")
+                return {
+                    'success': False,
+                    'error': 'No se encontraron audios para augmentar'
+                }
+            
+            # Crear augmentador
+            augmentor = AudioAugmentation(sr=22050)
+            
+            # Directorio de salida
+            output_base_dir = os.path.join(self.BASE_PATH, 'data', 'audios_augmented')
+            
+            # Preguntar cuántas variantes generar
+            print("\n¿Cuántas variantes deseas generar por audio?")
+            print("  (Recomendado: 15, genera 7 audios × 15 = 105 muestras totales)")
+            
+            try:
+                variants_input = input("  Ingresa el número [10-20] (default: 15): ").strip()
+                variants = int(variants_input) if variants_input else 15
+                
+                if not (10 <= variants <= 20):
+                    print(f"  ⚠️  Fuera de rango, usando default: 15")
+                    variants = 15
+            except ValueError:
+                variants = 15
+            
+            print(f"\n📊 Augmentando dataset con {variants} variantes por audio...")
+            
+            # Ejecutar augmentación
+            stats = augmentor.augment_dataset(
+                dataset_audio_dir=audio_dir,
+                output_base_dir=output_base_dir,
+                variants_per_audio=variants
+            )
+            
+            # Mostrar resultados
+            print("\n" + "="*70)
+            print("✓ AUGMENTACIÓN COMPLETADA")
+            print("="*70)
+            print(f"  Personas procesadas: {stats['total_persons']}")
+            print(f"  Audios originales: {stats['total_audios_original']}")
+            print(f"  Audios total tras augmentación: {stats['total_audios_augmented']}")
+            print(f"  Factor de expansión: {stats['total_audios_augmented'] / max(stats['total_audios_original'], 1):.1f}x")
+            
+            print(f"\n  Detalles por persona:")
+            for person, person_stats in stats['persons'].items():
+                exp = person_stats['audios_augmented'] / max(person_stats['audios_original'], 1)
+                print(f"    • {person}: {person_stats['audios_original']} → {person_stats['audios_augmented']} ({exp:.0f}x)")
+            
+            print(f"\n  📁 Audios augmentados guardados en:")
+            print(f"     {output_base_dir}")
+            print(f"\n  💡 El próximo entrenamiento usará automáticamente estos audios augmentados")
+            print(f"     en lugar de replicación artificial")
+            
+            return {
+                'success': True,
+                'message': 'Augmentación de audios completada exitosamente',
+                **stats
+            }
+        
+        except Exception as e:
+            print(f"\n❌ Error durante augmentación: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     # ==================== COMANDO 4: ENTRENAR SVM ====================
     def train_svm(self, modality: str = 'fusion') -> Dict[str, Any]:
         """
@@ -670,8 +770,9 @@ class CommandHandler:
             os.makedirs(self.MODELS_PATH, exist_ok=True)
             model.save(model_path)
             
-            # Guardar evaluación
+            # Guardar evaluación y accuracy para comparación posterior
             self.last_evaluation = metrics
+            self.training_accuracy = metrics.get('accuracy', 0.0)  # Guardar para comparar con evaluación
             
             print(f"\n{'='*70}")
             print(f"✓ MODELO GUARDADO: {model_path}")
@@ -742,6 +843,7 @@ class CommandHandler:
             # Determinar qué características usar basado en el tipo de modelo
             if 'fusion' in model_path:
                 # Para modelos de fusión, cargar ambas características y fusionarlas
+                # Usar la MISMA estrategia que en entrenamiento
                 img_features_file = os.path.join(self.FEATURES_PATH, f'features_{self.preprocessor_type}.npy')
                 img_labels_file = os.path.join(self.FEATURES_PATH, f'labels_{self.preprocessor_type}.npy')
                 audio_features_file = os.path.join(self.FEATURES_PATH, 'features_audio.npy')
@@ -752,14 +854,17 @@ class CommandHandler:
                     img_labels = np.load(img_labels_file, allow_pickle=True)
                     audio_features = np.load(audio_features_file)
                     
-                    # Replicar audio para emparejar con imágenes
                     n_images = len(img_features)
                     n_audio = len(audio_features)
-                    n_replicas = max(1, n_images // n_audio)
                     
-                    audio_features_expanded = np.repeat(audio_features, n_replicas, axis=0)
-                    if len(audio_features_expanded) > n_images:
-                        audio_features_expanded = audio_features_expanded[:n_images]
+                    # Replicar audios EXACTAMENTE como en entrenamiento
+                    # Usar ciclo repetido: audio[i % n_audio]
+                    audio_features_expanded = np.zeros((n_images, audio_features.shape[1]), dtype=audio_features.dtype)
+                    for i in range(n_images):
+                        audio_idx = i % n_audio
+                        audio_features_expanded[i] = audio_features[audio_idx]
+                    
+                    print(f"   Imágenes: {n_images}, Audios originales: {n_audio}, Método: ciclo repetido")
                     
                     features = np.hstack([img_features, audio_features_expanded])
                     labels = img_labels
@@ -801,7 +906,24 @@ class CommandHandler:
             
             # Evaluar
             evaluator = ModelEvaluator()
-            metrics = evaluator.evaluate(model, features, labels)
+            
+            # IMPORTANTE: Hacer el MISMO split 80/20 que en entrenamiento
+            # para evaluar solo en los datos de PRUEBA (20%)
+            from sklearn.model_selection import train_test_split
+            
+            X_train, X_test, y_train, y_test = train_test_split(
+                features, labels,
+                test_size=0.2,
+                random_state=42,
+                stratify=labels
+            )
+            
+            print(f"\n   Split Train/Test (80/20):")
+            print(f"   - Entrenamiento: {len(X_train)} muestras")
+            print(f"   - Prueba: {len(X_test)} muestras ← Evaluando aquí")
+            
+            # Evaluar SOLO en datos de prueba (igual que entrenamiento)
+            metrics = evaluator.evaluate(model, X_test, y_test)
             
             self.last_evaluation = metrics
             
@@ -813,6 +935,21 @@ class CommandHandler:
             print(f"  Recall:    {metrics['recall_avg']:.4f}")
             print(f"  F1-Score:  {metrics['f1_avg']:.4f}")
             print(f"{'='*60}\n")
+            
+            # Advertencia de overfitting si hay brecha grande
+            if self.last_evaluation is not None:
+                # El último_evaluation es del conjunto de prueba durante training
+                # Comparar con métricas actuales
+                if hasattr(self, 'training_accuracy'):
+                    gap = self.training_accuracy - metrics['accuracy']
+                    if gap > 0.5:  # Brecha > 50% es severo
+                        print(f"⚠️  ADVERTENCIA: OVERFITTING SEVERO DETECTADO")
+                        print(f"   - Accuracy en training: ~{self.training_accuracy:.1%}")
+                        print(f"   - Accuracy en prueba: {metrics['accuracy']:.1%}")
+                        print(f"   - Brecha: {gap:.1%}")
+                        print(f"   • Causa probable: Replicación excesiva de audios (7 → 6300+)")
+                        print(f"   • Solución: Agregar más muestras de audio reales (no replicadas)")
+                        print(f"   • Alternativa: Usar solo HOG (opción imagen) sin audio\n")
             
             return {
                 'success': True,

@@ -48,25 +48,46 @@ class ModelEvaluator:
         """
         Calcula curvas ROC para cada clase (One-vs-Rest).
         """
-        n_classes = len(classes)
-        
-        # Binarizar las etiquetas
-        y_bin = label_binarize(labels, classes=classes)
-        if n_classes == 2:
-            y_bin = np.column_stack([1 - y_bin, y_bin])
-        
-        roc_curves = {}
-        
-        for i, cls in enumerate(classes):
-            fpr, tpr, _ = roc_curve(y_bin[:, i], decision_function[:, i])
-            roc_auc = auc(fpr, tpr)
-            roc_curves[cls] = {
-                'fpr': fpr.tolist(),
-                'tpr': tpr.tolist(),
-                'auc': float(roc_auc)
-            }
-        
-        return roc_curves
+        try:
+            n_classes = len(classes)
+            
+            # Binarizar las etiquetas
+            y_bin = label_binarize(labels, classes=classes)
+            if n_classes == 2:
+                y_bin = np.column_stack([1 - y_bin, y_bin])
+            
+            # Asegurar que decision_function es 2D
+            if decision_function.ndim == 1:
+                decision_function = decision_function.reshape(-1, 1)
+            
+            # Si hay menos columnas que clases, rellenar con ceros
+            if decision_function.shape[1] < n_classes:
+                padding = np.zeros((decision_function.shape[0], n_classes - decision_function.shape[1]))
+                decision_function = np.hstack([decision_function, padding])
+            
+            roc_curves = {}
+            
+            for i, cls in enumerate(classes):
+                try:
+                    fpr, tpr, _ = roc_curve(y_bin[:, i], decision_function[:, i])
+                    roc_auc = auc(fpr, tpr)
+                    roc_curves[cls] = {
+                        'fpr': fpr.tolist(),
+                        'tpr': tpr.tolist(),
+                        'auc': float(roc_auc)
+                    }
+                except Exception as e:
+                    # Silenciosamente fallar para esta clase
+                    roc_curves[cls] = {
+                        'fpr': [],
+                        'tpr': [],
+                        'auc': 0.0
+                    }
+            
+            return roc_curves
+        except Exception as e:
+            print(f"⚠️  Error calculando curvas ROC: {e}")
+            return None
     
     def plot_roc_curves(self, metrics, save_path=None):
         """

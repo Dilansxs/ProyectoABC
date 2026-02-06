@@ -62,6 +62,7 @@ def show_menu(handler: CommandHandler) -> str:
     print(f"│  1. Preprocesar dataset                          │")
     print(f"│  2. Detectar cuerpos/rostros                     │")
     print(f"│  3. Extraer características                      │")
+    print(f"│  3b. 🎵 Augmentar dataset de audios              │")
     print(f"│  4. Entrenar modelo SVM                          │")
     print(f"│  5. Ver evaluación                               │")
     print(f"│  ─────────────────────────────────────────────   │")
@@ -119,6 +120,12 @@ def run_interactive_mode(handler: CommandHandler):
                 # Extraer características
                 print("\n" + "─" * 50)
                 result = handler.extract_features()
+                print_result(result)
+            
+            elif option == '3b':
+                # Augmentar audios
+                print("\n" + "─" * 50)
+                result = handler.augment_audio_dataset()
                 print_result(result)
             
             elif option == '4':

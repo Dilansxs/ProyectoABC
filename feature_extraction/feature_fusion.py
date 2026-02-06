@@ -136,6 +136,13 @@ class FeatureFusion:
         """
         Obtiene todos los audios de una persona.
         
+        Busca en el siguiente orden:
+        1. data/audios_augmented/{person}/ (si existen audios augmentados)
+        2. data/datasetPros/audio/{person}/ (audios originales)
+        
+        Esto evita replicación artificial - si usaste AudioAugmentation para
+        expandir de 1 audio a 10-15 variantes, usará esas en lugar de replicar.
+        
         Args:
             audio_base_dir: Directorio base de audios
             person_name: Nombre de la persona
@@ -143,6 +150,19 @@ class FeatureFusion:
         Returns:
             Lista de rutas de audios ordenadas
         """
+        # Primero intentar buscar audios augmentados
+        augmented_dir = os.path.join('data', 'audios_augmented', person_name)
+        if os.path.exists(augmented_dir):
+            audios = []
+            for filename in sorted(os.listdir(augmented_dir)):
+                if filename.endswith(('.wav', '.mp3', '.flac')):
+                    audios.append(os.path.join(augmented_dir, filename))
+            
+            if audios:
+                self.logger.info(f"    ✓ {len(audios)} audios augmentados encontrados")
+                return audios
+        
+        # Si no hay augmentados, usar los audios originales
         person_audio_dir = os.path.join(audio_base_dir, person_name)
         if not os.path.exists(person_audio_dir):
             return []
@@ -151,6 +171,10 @@ class FeatureFusion:
         for filename in sorted(os.listdir(person_audio_dir)):
             if filename.endswith(('.wav', '.mp3', '.flac')):
                 audios.append(os.path.join(person_audio_dir, filename))
+        
+        if audios:
+            self.logger.info(f"    ✓ {len(audios)} audios originales encontrados")
+        
         return audios
     
     def fuse_features(self, 
@@ -213,15 +237,20 @@ class FeatureFusion:
             else:
                 self.logger.info(f"  ✓ Audios encontrados: {len(audios)}")
             
-            # Estrategia de asociación: replicar audios si hay menos
+            # Estrategia de asociación: replicar audios si hay menos (ciclo repetido)
             if len(audios) < len(images):
-                # Repetir audios en ciclo
+                # Crear lista extendida usando ciclo repetido
                 audios_extended = []
+                n_valid_audios = len(audios) if audios else 1
                 for i in range(len(images)):
-                    audio_idx = i % len([a for a in audios if a is not None])
-                    audios_extended.append(audios[audio_idx] if audios[audio_idx] is not None else None)
+                    audio_idx = i % n_valid_audios
+                    audios_extended.append(audios[audio_idx] if audios else None)
                 audios = audios_extended
-                self.logger.info(f"  ↻ Audios replicados para {len(images)} imágenes")
+                self.logger.info(f"  ↻ Audios replicados para {len(images)} imágenes (ciclo)")
+            elif len(audios) > len(images):
+                # Si hay más audios que imágenes, truncar
+                audios = audios[:len(images)]
+                self.logger.info(f"  ✂️  Audios truncados a {len(images)} imágenes")
             
             # Extraer características
             hog_features_list = []

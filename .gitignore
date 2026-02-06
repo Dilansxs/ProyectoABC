@@ -6,6 +6,7 @@ datasetPros/
 *.mov
 *.flv
 *.mkv
+*.wav
 
 # Modelos entrenados
 models/
