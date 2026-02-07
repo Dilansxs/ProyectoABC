@@ -1,4 +1,3 @@
-# ==== svm_classifier/svm_model.py ====
 """
 Modelo SVM para clasificación.
 """

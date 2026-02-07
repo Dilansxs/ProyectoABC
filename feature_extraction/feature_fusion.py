@@ -216,26 +216,26 @@ class FeatureFusion:
         self.logger.info(f"Procesando {len(persons)} personas...")
         
         for person_name in persons:
-            self.logger.info(f"\n➤ Persona: {person_name}")
+            self.logger.info(f"\n Persona: {person_name}")
             
             person_path = os.path.join(dataset_processed_path, person_name)
             
             # Obtener imágenes
             images = self._get_person_images(person_path)
             if not images:
-                self.logger.warning(f"  ⚠️  No hay imágenes para {person_name}")
+                self.logger.warning(f"No hay imágenes para {person_name}")
                 continue
             
-            self.logger.info(f"  ✓ Imágenes encontradas: {len(images)}")
+            self.logger.info(f"Imágenes encontradas: {len(images)}")
             
             # Obtener audios
             audios = self._get_person_audios(audio_base_dir, person_name)
             if not audios:
-                self.logger.warning(f"  ⚠️  No hay audios para {person_name}")
+                self.logger.warning(f"No hay audios para {person_name}")
                 # Continuar con HOG solo + MFCC ceros
                 audios = [None] * len(images)
             else:
-                self.logger.info(f"  ✓ Audios encontrados: {len(audios)}")
+                self.logger.info(f"Audios encontrados: {len(audios)}")
             
             # Estrategia de asociación: replicar audios si hay menos (ciclo repetido)
             if len(audios) < len(images):
@@ -250,7 +250,7 @@ class FeatureFusion:
             elif len(audios) > len(images):
                 # Si hay más audios que imágenes, truncar
                 audios = audios[:len(images)]
-                self.logger.info(f"  ✂️  Audios truncados a {len(images)} imágenes")
+                self.logger.info(f"Audios truncados a {len(images)} imágenes")
             
             # Extraer características
             hog_features_list = []
@@ -280,7 +280,7 @@ class FeatureFusion:
             X_fused.append(fused_person)
             labels.extend([person_name] * len(fused_person))
             
-            self.logger.info(f"  ✓ Características fusionadas: {fused_person.shape}")
+            self.logger.info(f"Características fusionadas: {fused_person.shape}")
         
         # Concatenar todas las personas
         if not X_fused:
@@ -320,38 +320,3 @@ class FeatureFusion:
             'fusion_description': f"Concatenación HOG + MFCC ({hog_dim + mfcc_dim} características)"
         }
 
-
-# ============================================================================
-# EJEMPLO DE USO
-# ============================================================================
-
-def example_fusion():
-    """Ejemplo de uso del fusionador de características."""
-    
-    fusion = FeatureFusion(
-        use_audio_validation=True
-    )
-    
-    # Mostrar información
-    info = fusion.get_feature_info()
-    print("\nInformación de características:")
-    for key, value in info.items():
-        print(f"  {key}: {value}")
-    
-    # Fusionar características
-    X_fused, labels = fusion.fuse_features(
-        dataset_processed_path='data/datasetPros',
-        audio_base_dir='data/datasetPros/audio'
-    )
-    
-    if X_fused.size > 0:
-        print(f"\n✓ Características fusionadas con éxito")
-        print(f"  Forma: {X_fused.shape}")
-        print(f"  Etiquetas únicas: {len(set(labels))}")
-        print(f"  Etiquetas: {set(labels)}")
-    else:
-        print(f"❌ No se pudieron fusionar características")
-
-
-if __name__ == "__main__":
-    example_fusion()

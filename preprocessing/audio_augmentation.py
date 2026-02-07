@@ -32,7 +32,7 @@ class AudioAugmentation:
             sr (int): Frecuencia de muestreo
         """
         self.sr = sr
-        print(f"[AudioAugmentation] ✓ Augmentador inicializado - sr={sr}Hz")
+        print(f"[AudioAugmentation] Augmentador inicializado - sr={sr}Hz")
     
     def pitch_shift(self, y: np.ndarray, n_steps: int) -> np.ndarray:
         """
@@ -132,7 +132,7 @@ class AudioAugmentation:
             else:
                 return y
         except Exception as e:
-            print(f"[AudioAugmentation] ⚠️  Error en augmentación {augmentation_type}: {e}")
+            print(f"[AudioAugmentation] Error en augmentación {augmentation_type}: {e}")
             return y
     
     def create_augmented_variants(self, audio_path: str, num_variants: int = 10) -> List[np.ndarray]:
@@ -164,11 +164,11 @@ class AudioAugmentation:
                 augmented = self.augment_audio(y, aug_type)
                 variants.append(augmented)
             
-            print(f"[AudioAugmentation] ✓ {len(variants)} variantes generadas de {os.path.basename(audio_path)}")
+            print(f"[AudioAugmentation] {len(variants)} variantes generadas de {os.path.basename(audio_path)}")
             return variants
         
         except Exception as e:
-            print(f"[AudioAugmentation] ❌ Error cargando audio: {e}")
+            print(f"[AudioAugmentation] Error cargando audio: {e}")
             return [np.array([])]
     
     def save_augmented_variants(self, audio_path: str, output_dir: str, num_variants: int = 10) -> List[str]:
@@ -201,25 +201,17 @@ class AudioAugmentation:
                 sf.write(output_path, audio_data, self.sr, subtype='PCM_16')
                 saved_paths.append(output_path)
             
-            print(f"[AudioAugmentation] ✓ {len(saved_paths)} archivos guardados en {output_dir}")
+            print(f"[AudioAugmentation] {len(saved_paths)} archivos guardados en {output_dir}")
             return saved_paths
         
         except Exception as e:
-            print(f"[AudioAugmentation] ❌ Error guardando variantes: {e}")
+            print(f"[AudioAugmentation] Error guardando variantes: {e}")
             return []
     
     def augment_dataset(self, dataset_audio_dir: str, output_base_dir: str, 
                        variants_per_audio: int = 10) -> dict:
         """
         Augmenta todos los audios de un dataset.
-        
-        Estructura esperada:
-        dataset_audio_dir/
-        ├── Angeli/
-        │   ├── audio_001.wav
-        │   └── ...
-        ├── Danilo/
-        └── ...
         
         Args:
             dataset_audio_dir: Directorio raíz con carpetas por persona
@@ -272,54 +264,3 @@ class AudioAugmentation:
                 stats['persons'][person_dir]['audios_augmented'] += len(saved)
         
         return stats
-
-
-# ============================================================================
-# EJEMPLO DE USO
-# ============================================================================
-
-def example_usage():
-    """Ejemplo de cómo usar AudioAugmentation."""
-    
-    augmentor = AudioAugmentation(sr=22050)
-    
-    # Ejemplo 1: Crear variantes de un audio individual
-    print("\n=== EJEMPLO 1: Variantes de un audio ===")
-    audio_path = "data/audios/Angeli/audio_001.wav"
-    
-    if os.path.exists(audio_path):
-        variants = augmentor.create_augmented_variants(audio_path, num_variants=10)
-        print(f"✓ Generadas {len(variants)} variantes")
-    
-    # Ejemplo 2: Guardar variantes
-    print("\n=== EJEMPLO 2: Guardar variantes ===")
-    saved = augmentor.save_augmented_variants(
-        audio_path,
-        "data/audios_augmented/Angeli/",
-        num_variants=10
-    )
-    print(f"✓ Guardadas {len(saved)} variantes")
-    
-    # Ejemplo 3: Augmentar dataset completo
-    print("\n=== EJEMPLO 3: Augmentar dataset completo ===")
-    stats = augmentor.augment_dataset(
-        dataset_audio_dir="data/datasetPros/audio/",
-        output_base_dir="data/audios_augmented/",
-        variants_per_audio=15
-    )
-    
-    print("\n📊 ESTADÍSTICAS DE AUGMENTACIÓN")
-    print(f"  Personas: {stats['total_persons']}")
-    print(f"  Audios originales: {stats['total_audios_original']}")
-    print(f"  Audios tras augmentación: {stats['total_audios_augmented']}")
-    print(f"  Factor de expansión: {stats['total_audios_augmented'] / max(stats['total_audios_original'], 1):.1f}x")
-    
-    # Detalles por persona
-    for person, person_stats in stats['persons'].items():
-        print(f"\n  {person}:")
-        print(f"    Original: {person_stats['audios_original']}")
-        print(f"    Augmentados: {person_stats['audios_augmented']}")
-
-
-if __name__ == "__main__":
-    example_usage()
