@@ -515,10 +515,10 @@ def example_usage():
             mfcc_extractor = MFCCExtractor()
             mfcc_features = mfcc_extractor.extract(result['audio'])
             
-            print(f"\n✓ MFCC extraído - Shape: {mfcc_features.shape}")
+            print(f"\nMFCC extraído - Shape: {mfcc_features.shape}")
     
     else:
-        print(f"❌ Error: {result['error']}")
+        print(f"Error: {result['error']}")
 
 
 if __name__ == "__main__":
